@@ -131,25 +131,39 @@ class HttpAdapter:
             #
             response = b"HTTP/1.1 200 OK\r\n\r\n"
         else:
-            import os
-            # Lấy đường dẫn file, bỏ dấu gạch chéo đầu tiên của req.path
-            file_name = req.path.lstrip('/')
-            file_path = os.path.join("www", file_name)
-            
-            # Kiểm tra xem file có tồn tại không
-            if os.path.isfile(file_path):
-                # Mở file chế độ đọc byte ('rb')
-                with open(file_path, 'rb') as f:
-                    file_content = f.read()
-                
-                # Tạo header
-                header = b"HTTP/1.1 200 OK\r\n"
-                header += b"Content-Type: text/html\r\n\r\n"
-                
-                # Gộp header và nội dung file
-                response = header + file_content
+            if req.path is None:
+                response = b"HTTP/1.1 400 Bad Request\r\n\r\n<h1>400 Bad Request</h1>"
             else:
-                response = b"HTTP/1.1 404 Not Found\r\n\r\n<h1>404 Not Found</h1>"
+                import os
+                import mimetypes
+                # Lấy đường dẫn file, bỏ dấu gạch chéo đầu tiên của req.path
+                file_name = req.path.lstrip('/')
+                
+                # Check in www first
+                file_path = os.path.join("www", file_name)
+                # If not found, check in static
+                if not os.path.isfile(file_path):
+                    file_path = os.path.join("static", file_name)
+                
+                # Kiểm tra xem file có tồn tại không
+                if os.path.isfile(file_path):
+                    # Mở file chế độ đọc byte ('rb')
+                    with open(file_path, 'rb') as f:
+                        file_content = f.read()
+                    
+                    # Đoán kiểu nội dung (Content-Type)
+                    content_type, _ = mimetypes.guess_type(file_path)
+                    if content_type is None:
+                        content_type = 'application/octet-stream'
+                        
+                    # Tạo header
+                    header = b"HTTP/1.1 200 OK\r\n"
+                    header += f"Content-Type: {content_type}\r\n\r\n".encode()
+                    
+                    # Gộp header và nội dung file
+                    response = header + file_content
+                else:
+                    response = b"HTTP/1.1 404 Not Found\r\n\r\n<h1>404 Not Found</h1>"
 
         #print("[HttpAdapter] Response content {}".format(response))
         if isinstance(response, str):

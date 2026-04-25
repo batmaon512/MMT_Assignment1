@@ -147,19 +147,31 @@ def run_backend(ip, port, routes):
        asyncio.run(async_server(ip, port, routes))
        return
 
-    # Process socket object
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    import select
+    
+    # --- 1. Tạo Socket cho HTTP (Ví dụ: port 9000) ---
+    server_http = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_http.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    
+    # --- 2. Tạo Socket cho HTTPS (Ví dụ: port 9001) ---
+    server_https = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_https.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
     try:
-        server.bind((ip, port))
-        server.listen(50)
-
+        # Khởi động server HTTP
+        server_http.bind((ip, port))
+        server_http.listen(50)
+        print("[Backend] Listening on port {} (HTTP)".format(port))
+        
+        # Khởi động server HTTPS
+        https_port = port + 1
+        server_https.bind((ip, https_port))
+        server_https.listen(50)
         context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
         context.load_cert_chain(certfile="cert.pem", keyfile="key.pem")
-        server = context.wrap_socket(server, server_side=True)
+        server_https = context.wrap_socket(server_https, server_side=True)
+        print("[Backend] Listening on port {} (HTTPS enabled)".format(https_port))
 
-        print("[Backend] Listening on port {} (HTTPS enabled)".format(port))
         if routes != {}:
             print("[Backend] route settings")
             for key, value in routes.items():
@@ -168,45 +180,36 @@ def run_backend(ip, port, routes):
                   isCoFunc += "**ASYNC** "
                print("   + ('{}', '{}'): {}{}".format(key[0], key[1], isCoFunc, str(value)))
 
-        if mode_async == "callback":
-            sel.register(server, selectors.EVENT_READ, (handle_client_callback, ip, port, routes))
+        # Lắng nghe chung cả 2 socket
+        sockets_to_listen = [server_http, server_https]
 
         while True:
-            try:
-                # Accept connection
-                conn, addr = server.accept()
-            except Exception as e:
-                print("[Backend] SSL/Accept error: {}".format(e))
-                continue
+            # Dùng select để chờ socket nào có khách gõ cửa
+            readable, _, _ = select.select(sockets_to_listen, [], [])
+            
+            for s in readable:
+                try:
+                    # Accept connection
+                    conn, addr = s.accept()
+                except Exception as e:
+                    print("[Backend] SSL/Accept error: {}".format(e))
+                    continue
 
-            #
-            #  TODO: implement the step of the client incomping connection
-            #        using non-blocking communication
-            #          + multi-thread
-            #          + callback
-            #          + coroutine
-            #        provided handle_client routine
-            #
+                if mode_async == "callback":
+                   # Callback implementation - Event driven architecture
+                   s.setblocking(False)
+                   events = sel.select(timeout=None)
+                   for key, mask in events:
+                       callback, cb_ip, cb_port, cb_routes = key.data
+                       callback(key.fileobj, cb_ip, cb_port, conn, addr, cb_routes)
 
-
-            # @bksysnet: We provide various mechanisms to handle client connection
-            #            student can merge and provide dynamic selection later
-            #            this provider simplify by using mode selection variable
-            #            change global variable mode_async to select the mechanism
-            if mode_async == "callback":
-               # Callback implementation - Event driven architecture
-               server.setblocking(False)
-
-               events = sel.select(timeout=None)
-               for key, mask in events:
-                   callback, ip, port, routes = key.data
-                   callback(key.fileobj, ip, port, conn, addr, routes)
-
-            elif mode_async == "threading":
-               # Baseline multi-thread implementation
-               client_thread = threading.Thread(target=handle_client, args=(ip, port, conn, addr, routes))
-               client_thread.daemon = True
-               client_thread.start()
+                elif mode_async == "threading":
+                   # Baseline multi-thread implementation
+                   # Gửi port thực tế mà khách kết nối vào (port hoặc https_port)
+                   actual_port = port if s is server_http else https_port
+                   client_thread = threading.Thread(target=handle_client, args=(ip, actual_port, conn, addr, routes))
+                   client_thread.daemon = True
+                   client_thread.start()
     except socket.error as e:
       print("Socket error: {}".format(e))
 
