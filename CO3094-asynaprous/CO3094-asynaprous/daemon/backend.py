@@ -43,6 +43,7 @@ Usage Example:
 import socket
 import threading
 import argparse
+import ssl
 
 import asyncio
 import inspect
@@ -107,7 +108,7 @@ async def handle_client_coroutine(reader, writer):
     # Handle client in asynchronous mode
     while True:
           daemon = HttpAdapter(None, None, None, None, None)
-           await daemon.handle_client_coroutine(reader, writer)
+          await daemon.handle_client_coroutine(reader, writer)
 
 async def async_server(ip="0.0.0.0", port=7000, routes={}):
     print("[Backend] async_server **ASYNC** listening on port {}".format(port))
@@ -148,12 +149,17 @@ def run_backend(ip, port, routes):
 
     # Process socket object
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
     try:
         server.bind((ip, port))
         server.listen(50)
 
-        print("[Backend] Listening on port {}".format(port))
+        context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        context.load_cert_chain(certfile="cert.pem", keyfile="key.pem")
+        server = context.wrap_socket(server, server_side=True)
+
+        print("[Backend] Listening on port {} (HTTPS enabled)".format(port))
         if routes != {}:
             print("[Backend] route settings")
             for key, value in routes.items():
@@ -166,8 +172,12 @@ def run_backend(ip, port, routes):
             sel.register(server, selectors.EVENT_READ, (handle_client_callback, ip, port, routes))
 
         while True:
-            # Accept connection
-            conn, addr = server.accept()
+            try:
+                # Accept connection
+                conn, addr = server.accept()
+            except Exception as e:
+                print("[Backend] SSL/Accept error: {}".format(e))
+                continue
 
             #
             #  TODO: implement the step of the client incomping connection
@@ -192,11 +202,11 @@ def run_backend(ip, port, routes):
                    callback, ip, port, routes = key.data
                    callback(key.fileobj, ip, port, conn, addr, routes)
 
-            else:
+            elif mode_async == "threading":
                # Baseline multi-thread implementation
-               #client_thread = threading.Thread...
-
-
+               client_thread = threading.Thread(target=handle_client, args=(ip, port, conn, addr, routes))
+               client_thread.daemon = True
+               client_thread.start()
     except socket.error as e:
       print("Socket error: {}".format(e))
 

@@ -106,18 +106,54 @@ class HttpAdapter:
         resp = self.response
 
         # Handle the request
-        msg = conn.recv(1024).decode()
+        msg = ""
+        while True:
+            chunk = conn.recv(1024).decode('utf-8', errors='ignore')
+            if not chunk:
+                break
+            msg += chunk
+            if '\r\n\r\n' in msg:
+                break
+
+        print("\n" + "="*40)
+        print("[HttpAdapter] Raw message from client:")
+        print(msg)
+        print("="*40 + "\n")
+        
         req.prepare(msg, routes)
         print("[HttpAdapter] Invoke handle_client connection {}".format(addr))
 
+        response = b""
         # Handle request hook
         if req.hook:
             #
             # TODO: handle for App hook here
             #
-            response = ""
+            response = b"HTTP/1.1 200 OK\r\n\r\n"
+        else:
+            import os
+            # Lấy đường dẫn file, bỏ dấu gạch chéo đầu tiên của req.path
+            file_name = req.path.lstrip('/')
+            file_path = os.path.join("www", file_name)
+            
+            # Kiểm tra xem file có tồn tại không
+            if os.path.isfile(file_path):
+                # Mở file chế độ đọc byte ('rb')
+                with open(file_path, 'rb') as f:
+                    file_content = f.read()
+                
+                # Tạo header
+                header = b"HTTP/1.1 200 OK\r\n"
+                header += b"Content-Type: text/html\r\n\r\n"
+                
+                # Gộp header và nội dung file
+                response = header + file_content
+            else:
+                response = b"HTTP/1.1 404 Not Found\r\n\r\n<h1>404 Not Found</h1>"
 
         #print("[HttpAdapter] Response content {}".format(response))
+        if isinstance(response, str):
+            response = response.encode()
         conn.sendall(response)
         conn.close()
 

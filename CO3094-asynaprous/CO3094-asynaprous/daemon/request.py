@@ -81,7 +81,7 @@ class Request():
             if path == '/':
                 path = '/index.html'
         except Exception:
-            return None, None
+            return None, None, None
 
         return method, path, version
              
@@ -111,6 +111,11 @@ class Request():
         print("[Request] prepare request missg {}".format(request))
         self.method, self.path, self.version = self.extract_request_line(request)
         print("[Request] {} path {} version {}".format(self.method, self.path, self.version))
+
+        if self.method is None:
+            return
+            
+        self.headers = self.prepare_headers(request)
 
         #
         # @bksysnet Preapring the webapp hook with AsynapRous instance
