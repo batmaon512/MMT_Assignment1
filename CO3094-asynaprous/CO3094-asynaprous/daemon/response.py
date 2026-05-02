@@ -134,6 +134,9 @@ class Response():
             return 'application/octet-stream'
         return mime_type or 'application/octet-stream'
 
+    def handle_text_other(self, main_type, sub_type):
+        raise ValueError("Invalid MIME type: main_type={} sub_type={}".format(main_type, sub_type))
+
 
     def prepare_content_type(self, mime_type='text/html'):
         """
@@ -163,13 +166,19 @@ class Response():
             elif sub_type == 'html':
                 base_dir = BASE_DIR+"www/"
             else:
-                handle_text_other(sub_type)
+                self.handle_text_other(main_type, sub_type)
         elif main_type == 'image':
             base_dir = BASE_DIR+"static/"
             self.headers['Content-Type']='image/{}'.format(sub_type)
         elif main_type == 'application':
             base_dir = BASE_DIR+"apps/"
             self.headers['Content-Type']='application/{}'.format(sub_type)
+        elif main_type == 'video':
+            base_dir = BASE_DIR+"video/"
+            self.headers['Content-Type']='video/{}'.format(sub_type)
+        elif main_type == 'audio':
+            base_dir = BASE_DIR+"audio/"
+            self.headers['Content-Type']='audio/{}'.format(sub_type)
         #
         #  TODO: process other mime_type
         #        application/xml       
@@ -226,37 +235,36 @@ class Response():
         reqhdr = request.headers
         rsphdr = self.headers
 
-        #Build dynamic headers
+        # Build dynamic headers
         headers = {
-                "Accept": "{}".format(reqhdr.get("Accept", "application/json")),
-                "Accept-Language": "{}".format(reqhdr.get("Accept-Language", "en-US,en;q=0.9")),
-                "Authorization": "{}".format(reqhdr.get("Authorization", "Basic <credentials>")),
-                "Cache-Control": "no-cache",
-                "Content-Type": "{}".format(self.headers['Content-Type']),
-                "Content-Length": "{}".format(len(self._content)),
-        #       "Cookie": "{}".format(reqhdr.get("Cookie", "sessionid=xyz789")), #dummy cooki
-        #
-        # TODO prepare the request authentication
-        #
-        #       self.auth = ...
-                "Date": "{}".format(datetime.datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")),
-                "Max-Forward": "10",
-                "Pragma": "no-cache",
-                "Proxy-Authorization": "Basic dXNlcjpwYXNz",  # example base64
-                "Warning": "199 Miscellaneous warning",
-                "User-Agent": "{}".format(reqhdr.get("User-Agent", "Chrome/123.0.0.0")),
-            }
+            "Content-Type": "{}".format(self.headers.get('Content-Type', 'text/html')),
+            "Content-Length": "{}".format(len(self._content)),
+            "Date": "{}".format(datetime.datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")),
+            "Server": "AsynapRous",
+            "Cache-Control": "no-cache"
+        }
 
-        # Header text alignment
+        # TODO: implement the cookie function here
+        # TODO prepare the request authentication
+        # Gộp tất cả các header được set từ bên ngoài (như Set-Cookie do httpadapter chỉ định)
+        for k, v in self.headers.items():
+            if k not in headers:
+                headers[k] = v
             #
-            #  TODO: implement the header building to create formated
-            #        header from the provied headers
-            #
-            #
+ 
+
+        status = self.status_code if getattr(self, 'status_code', None) else 200
+        reason = self.reason if getattr(self, 'reason', None) else "OK"
+        
+        fmt_header = "HTTP/1.1 {} {}\r\n".format(status, reason)
+        
+        for key, value in headers.items():
+            fmt_header += "{}: {}\r\n".format(key, value)
+            
+        fmt_header += "\r\n"
             # TODO prepare the request authentication
             #
             # self.auth = ...
-
 
         return str(fmt_header).encode('utf-8')
 
@@ -305,11 +313,25 @@ class Response():
         elif mime_type == 'application/json' or mime_type == 'application/octet-stream':
             base_dir = self.prepare_content_type(mime_type = 'application/json')
             envelop_content = ""
-
-        #
         # TODO: add support objects
-        #
+        elif mime_type.startswith('image/'):
+            base_dir = self.prepare_content_type(mime_type = mime_type)
+        elif mime_type.startswith('video/'):
+            base_dir = self.prepare_content_type(mime_type = mime_type)
+        elif mime_type.startswith('audio/'):
+            base_dir = self.prepare_content_type(mime_type = mime_type)
+        elif mime_type == 'application/zip':
+            base_dir = self.prepare_content_type(mime_type = mime_type)
         else:
             return self.build_notfound()
+            
+        # 1. Gọi thợ phụ lấy file từ ổ cứng lên
+        length, self._content = self.build_content(path, base_dir)
+        if length == -1:  # File không tồn tại hoặc lỗi đọc file
+            return self.build_notfound()
+            
+        # 2. Gọi thợ phụ tạo Header
+        self._header = self.build_response_header(request)
 
+        # 3. Gộp Header và Body lại thành một khối hoàn chỉnh
         return self._header + self._content

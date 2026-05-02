@@ -55,9 +55,7 @@ from .dictionary import CaseInsensitiveDict
 import selectors
 sel = selectors.DefaultSelector()
 
-mode_async = "callback"
-#mode_async = "coroutine"
-mode_async = "threading"
+mode_async = "coroutine"
 
 def handle_client(ip, port, conn, addr, routes):
     """
@@ -93,22 +91,23 @@ def handle_client_callback(server, ip, port,conn, addr, routes):
     daemon.handle_client(conn, addr, routes)
 
 
-# Coroutine async/await for handling new client
-async def handle_client_coroutine(reader, writer):
+# Wrap coroutine with routes closure
+def get_handle_client_coroutine(ip, port, routes):
     """
-    Coroutine in async communication to initialize connection instance
-    then delegates the client handling logic to it.
-
-    :param reader (StreamReader): Stream reader wrapper.
-    :param write (Stream write): Stream write wrapper.
+    Tạo ra một vỏ bọc (wrapper) để truyền tham số `routes` vào hàm bất đồng bộ.
+    Mỗi khi có Khách hàng kết nối, một bản sao HttpAdapter mới sẽ được tạo ra.
     """
-    addr = writer.get_extra_info("peername")
-    print("[Backend] Invoke handle_client_coroutine accepted connection from {}".format(addr))
-
-    # Handle client in asynchronous mode
-    while True:
-          daemon = HttpAdapter(None, None, None, None, None)
-          await daemon.handle_client_coroutine(reader, writer)
+    async def handle_client_coroutine(reader, writer):
+        addr = writer.get_extra_info("peername")
+        print(f"[Backend] Siêu bồi bàn (Async) tiếp nhận Khách hàng từ {addr}")
+        
+        # TẠO RA MỘT HTTP ADAPTER ĐỘC LẬP CHO TỪNG KHÁCH HÀNG (OOP)
+        # Truyền danh bạ API (routes) vào để Adapter biết đường xử lý
+        daemon = HttpAdapter(ip, port, None, addr, routes)
+        
+        # Bắt đầu xử lý Khách hàng (Sẽ nhường CPU khi gặp await)
+        await daemon.handle_client_coroutine(reader, writer)
+    return handle_client_coroutine
 
 async def async_server(ip="0.0.0.0", port=7000, routes={}):
     print("[Backend] async_server **ASYNC** listening on port {}".format(port))
@@ -120,7 +119,8 @@ async def async_server(ip="0.0.0.0", port=7000, routes={}):
                isCoFunc += "**ASYNC** "
             print("   + ('{}', '{}'): {}{}".format(key[0], key[1], isCoFunc, str(value)))
 
-    async_server = await asyncio.start_server(handle_client_coroutine, ip, port)
+    # Khởi động Server chạy trên chế độ Bất đồng bộ (Event Loop)
+    async_server = await asyncio.start_server(get_handle_client_coroutine(ip, port, routes), ip, port)
     async with async_server:
         await async_server.serve_forever()
     return

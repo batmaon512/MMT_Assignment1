@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Welcome to AsynapRous</title>
+    <!-- Nhúng font chữ hiện đại từ Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --glass-bg: rgba(255, 255, 255, 0.08);
+            --glass-border: rgba(255, 255, 255, 0.15);
+            --primary: #4F46E5;
+            --secondary: #ec4899;
+        }
+        
+        * { 
+            margin: 0; 
+            padding: 0; 
+            box-sizing: border-box; 
+            font-family: 'Outfit', sans-serif; 
+        }
+        
+        body {
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+            color: white;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        /* Hiệu ứng bong bóng phát sáng nền (Dynamic Background) */
+        .circle {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(100px);
+            z-index: 1;
+            opacity: 0.6;
+        }
+        .circle-1 { 
+            width: 500px; height: 500px; 
+            background: var(--primary); 
+            top: -150px; left: -100px; 
+            animation: float 12s infinite ease-in-out; 
+        }
+        .circle-2 { 
+            width: 400px; height: 400px; 
+            background: var(--secondary); 
+            bottom: -100px; right: -50px; 
+            animation: float 10s infinite ease-in-out reverse; 
+        }
+        
+        @keyframes float {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            50% { transform: translate(40px, 30px) scale(1.05); }
+        }
+        
+        /* Khối Glassmorphism trung tâm */
+        .glass-card {
+            background: var(--glass-bg);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--glass-border);
+            border-radius: 24px;
+            padding: 3.5rem 3rem;
+            width: 90%;
+            max-width: 850px;
+            text-align: center;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            animation: slideUp 0.8s ease-out;
+            z-index: 10;
+        }
+        
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(40px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        h1 {
+            font-size: 4rem;
+            font-weight: 800;
+            margin-bottom: 1rem;
+            background: linear-gradient(to right, #c084fc, #f472b6, #fb7185);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -1px;
+        }
+        
+        p.subtitle {
+            font-size: 1.25rem;
+            color: #94a3b8;
+            margin-bottom: 3rem;
+            font-weight: 300;
+            line-height: 1.7;
+            padding: 0 1rem;
+        }
+        
+        /* Lưới các nút chức năng */
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 3rem;
+        }
+        
+        .feature-box {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            padding: 2rem 1.5rem;
+            border-radius: 20px;
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            text-decoration: none;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.8rem;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .feature-box::before {
+            content: '';
+            position: absolute;
+            top: 0; left: -100%;
+            width: 50%; height: 100%;
+            background: linear-gradient(to right, transparent, rgba(255,255,255,0.1), transparent);
+            transform: skewX(-20deg);
+            transition: all 0.5s;
+        }
+        
+        .feature-box:hover::before {
+            left: 150%;
+        }
+        
+        .feature-box:hover {
+            transform: translateY(-8px);
+            background: rgba(255, 255, 255, 0.08);
+            border-color: rgba(255, 255, 255, 0.3);
+            box-shadow: 0 15px 30px rgba(0, 0, 0, 0.3);
+        }
+        
+        .icon { 
+            font-size: 2.5rem; 
+            margin-bottom: 0.5rem;
+            filter: drop-shadow(0 4px 6px rgba(0,0,0,0.2));
+        }
+        
+        .feature-title { 
+            font-weight: 600; 
+            font-size: 1.2rem; 
+            letter-spacing: 0.5px;
+        }
+        
+        .feature-desc { 
+            font-size: 0.9rem; 
+            color: #64748b; 
+            font-weight: 300; 
+            line-height: 1.4;
+        }
+        
+        .footer {
+            color: #475569;
+            font-size: 0.95rem;
+            font-weight: 400;
+            border-top: 1px solid rgba(255,255,255,0.05);
+            padding-top: 2rem;
+            margin-top: 1rem;
+        }
+        
+        /* Box người dùng góc trên trái */
+        #auth-box {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            padding: 10px 20px;
+            border-radius: 30px;
+            border: 1px solid rgba(255,255,255,0.2);
+            font-size: 0.95rem;
+            z-index: 50;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .btn-auth {
+            background: #ec4899;
+            color: white;
+            border: none;
+            padding: 5px 15px;
+            border-radius: 20px;
+            cursor: pointer;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+        .btn-auth:hover { background: #be185d; transform: scale(1.05); }
+    </style>
+</head>
+<body>
+    <!-- Auth Box góc trái trên cùng -->
+    <div id="auth-box">
+        <span id="auth-text">Đang kiểm tra...</span>
+    </div>
+
+    <!-- Hiệu ứng nền -->
+    <div class="circle circle-1"></div>
+    <div class="circle circle-2"></div>
+    
+    <!-- Nội dung chính -->
+    <div class="glass-card">
+        <h1>AsynapRous Server</h1>
+        <p class="subtitle">
+            Hệ thống Web Server hiệu năng cao & Ứng dụng Chat thời gian thực. 
+            Được xây dựng hoàn toàn từ Socket cơ bản.
+        </p>
+        
+        <div class="features">
+            <!-- Nút vào khu vực API/Chat -->
+            <a href="/form.html" class="feature-box">
+                <div class="icon">🚀</div>
+                <div class="feature-title">API & Chat App</div>
+                <div class="feature-desc">Test các điểm cuối RESTful API bằng AJAX (Echo, Hello)</div>
+            </a>
+            
+            <!-- Nút vào khu vực UI Đăng nhập -->
+            <a href="/login.html" class="feature-box">
+                <div class="icon">🔐</div>
+                <div class="feature-title">Bảo Mật</div>
+                <div class="feature-desc">Trải nghiệm Basic Auth & quản lý Session Cookie</div>
+            </a>
+            
+            <!-- Nút vào trang tĩnh Index cũ -->
+            <a href="/index.html" class="feature-box">
+                <div class="icon">📄</div>
+                <div class="feature-title">Trang tĩnh cũ</div>
+                <div class="feature-desc">Trang index.html cơ bản kèm logo BKSysNet</div>
+            </a>
+        </div>
+        
+        <div class="footer">
+            Computer Networking Assignment &copy; 2026 HCMUT
+        </div>
+    </div>
+
+    <!-- Logic Xử lý Xác thực (Authentication) -->
+    <script>
+        async function checkAuth() {
+            const authBox = document.getElementById('auth-text');
+            try {
+                const res = await fetch('/api/me');
+                const data = await res.json();
+                
+                if (res.ok && data.username) {
+                    authBox.innerHTML = `👋 Xin chào, <b>${data.username}</b> 
+                                         <button class="btn-auth" onclick="logout()">Đăng xuất</button>`;
+                } else {
+                    authBox.innerHTML = `🔴 Khách vãng lai 
+                                         <a href="/login.html" class="btn-auth">Đăng nhập</a>`;
+                }
+            } catch (err) {
+                authBox.innerHTML = `🔴 Khách vãng lai <a href="/login.html" class="btn-auth">Đăng nhập</a>`;
+            }
+        }
+
+        async function logout() {
+            try {
+                await fetch('/api/logout', { method: 'POST' });
+                window.location.reload(); // Tải lại trang để xóa thông tin
+            } catch (err) {
+                alert("Lỗi khi đăng xuất!");
+            }
+        }
+
+        // Chạy ngay khi mở trang
+        checkAuth();
+    </script>
+</body>
+</html>

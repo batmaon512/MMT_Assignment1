@@ -30,6 +30,8 @@ from daemon import create_backend
 # Default port number used if none is specified via command-line arguments.
 PORT = 9000 
 
+from daemon.api import API_ROUTES
+
 if __name__ == "__main__":
     """
     Entry point for launching the backend server.
@@ -63,4 +65,4 @@ if __name__ == "__main__":
     ip = args.server_ip
     port = args.server_port
 
-    create_backend(ip, port)
+    create_backend(ip, port, routes=API_ROUTES)

@@ -61,6 +61,8 @@ class Request():
         self.path = None        
         # The cookies set used to create Cookie header
         self.cookies = None
+        # Authentication details
+        self.auth = None
         #: request body to send to the server.
         self.body = None
         # The raw header
@@ -79,7 +81,7 @@ class Request():
             method, path, version = first_line.split()
 
             if path == '/':
-                path = '/index.html'
+                path = '/welcome.html'
         except Exception:
             return None, None, None
 
@@ -134,12 +136,22 @@ class Request():
             # ...
             #
 
-        self._raw_heaers = ""
-        self._raw_body =  ""
-        cookies = self.headers.get('cookie', '')
-            #
-            #  TODO: implement the cookie function here
-            #        by parsing the header            #
+        # ĐÂY LÀ PHẦN LẤY BODY (RUỘT THƯ) DÀNH CHO SERVER
+        # Bắt buộc phải có để đọc được tin nhắn Chat hoặc API
+        self._raw_headers, self._raw_body = self.fetch_headers_body(request)
+        self.body = self._raw_body
+        
+        # TODO: implement the cookie function here by parsing the header
+        cookie_str = self.headers.get('cookie', '')
+        self.cookies = {}
+        if cookie_str:
+            for pair in cookie_str.split(';'):
+                if '=' in pair:
+                    key, value = pair.strip().split('=', 1)
+                    self.cookies[key] = value
+
+        # TODO prepare the request authentication
+        self.auth = self.headers.get('authorization', None)
 
         return
 
