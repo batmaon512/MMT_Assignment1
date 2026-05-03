@@ -26,14 +26,39 @@ from .dictionary import CaseInsensitiveDict
 
 import asyncio
 import inspect
+import os
+import time
 import uuid # Thư viện tạo chuỗi ngẫu nhiên cho Session ID
 
 # --- DATABASE LƯU COOKIE (TRÊN RAM) ---
 MAX_SESSIONS = 100
 ACTIVE_SESSIONS = {}
+SESSION_TTL = 86400
 
 # --- DATABASE TÀI KHOẢN HỢP LỆ ---
-VALID_USERS = {
+ACCOUNTS_FILE = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "db", "account.txt")
+)
+SESSIONS_FILE = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "db", "sessions_id.txt")
+)
+
+def load_valid_users():
+    users = {}
+    try:
+        with open(ACCOUNTS_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if ":" in line:
+                    username, password = line.split(":", 1)
+                    users[username.strip()] = password.strip()
+    except FileNotFoundError:
+        pass
+    return users
+
+VALID_USERS = load_valid_users() or {
     "admin": "123456",
     "user1": "password"
 }
@@ -45,6 +70,65 @@ def add_session(session_id, username):
         oldest_key = next(iter(ACTIVE_SESSIONS))
         del ACTIVE_SESSIONS[oldest_key]
     ACTIVE_SESSIONS[session_id] = username
+
+def load_sessions():
+    sessions = {}
+    if not os.path.exists(SESSIONS_FILE):
+        return sessions
+    try:
+        with open(SESSIONS_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split("|", 2)
+                if len(parts) != 3:
+                    continue
+                sid, user, exp = parts
+                try:
+                    exp_val = float(exp)
+                except ValueError:
+                    continue
+                if exp_val > time.time():
+                    sessions[sid] = (user, exp_val)
+    except Exception:
+        return sessions
+    return sessions
+
+def save_sessions(sessions):
+    os.makedirs(os.path.dirname(SESSIONS_FILE), exist_ok=True)
+    lines = []
+    for sid, data in sessions.items():
+        user, exp = data
+        lines.append(f"{sid}|{user}|{int(exp)}")
+    with open(SESSIONS_FILE, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+def create_session(username):
+    sessions = load_sessions()
+    sessions = {sid: data for sid, data in sessions.items() if data[0] != username}
+    session_id = uuid.uuid4().hex
+    expire_time = time.time() + SESSION_TTL
+    sessions[session_id] = (username, expire_time)
+    save_sessions(sessions)
+    return session_id
+
+def validate_session(session_id):
+    sessions = load_sessions()
+    if session_id not in sessions:
+        return None
+    user, exp = sessions[session_id]
+    if exp <= time.time():
+        sessions.pop(session_id, None)
+        save_sessions(sessions)
+        return None
+    return user
+
+def remove_session(session_id):
+    sessions = load_sessions()
+    if session_id in sessions:
+        sessions.pop(session_id, None)
+        save_sessions(sessions)
 
 class HttpAdapter:
     """
@@ -102,6 +186,16 @@ class HttpAdapter:
         #: Response
         self.response = Response()
 
+    def build_unauthorized_response(self, req):
+        resp = Response()
+        resp.status_code = 401
+        resp.reason = "Unauthorized"
+        resp._content = b'{"error": "Unauthorized"}'
+        resp.headers['Content-Type'] = 'application/json'
+        resp.headers['WWW-Authenticate'] = 'Basic realm="AsynapRous", charset="UTF-8"'
+        header_str = resp.build_response_header(req)
+        return header_str + resp._content
+
     def handle_client(self, conn, addr, routes):
         """
         Handle an incoming client connection.
@@ -153,6 +247,12 @@ class HttpAdapter:
             if session_id in ACTIVE_SESSIONS:
                 is_authenticated = True
                 current_user = ACTIVE_SESSIONS[session_id]
+            else:
+                user = validate_session(session_id)
+                if user:
+                    is_authenticated = True
+                    current_user = user
+                    add_session(session_id, user)
 
         # 2. Nếu chưa có thẻ, kiểm tra xem có gửi Mật khẩu (Basic Auth) không
         if not is_authenticated and req.auth:
@@ -169,23 +269,37 @@ class HttpAdapter:
                         is_authenticated = True
                         current_user = username
                         # Đăng nhập đúng, cấp thẻ Cookie mới lưu vào RAM
-                        new_session = str(uuid.uuid4())
+                        new_session = create_session(username)
                         add_session(new_session, username)
-                        new_cookie_to_set = f"session_id={new_session}; Path=/"
+                        new_cookie_to_set = f"session_id={new_session}; Path=/; HttpOnly"
                         req.new_cookie = new_cookie_to_set
                 except Exception as e:
                     print("Lỗi giải mã Auth:", e)
 
         # 3. Phân quyền và Quyết định (Authorization & Routing)
         # Các đường dẫn được phép truy cập tự do không cần đăng nhập
-        public_paths = ['/', '/welcome.html', '/login.html', '/register.html']
-        is_public = req.path in public_paths or req.path.startswith('/css') or req.path.startswith('/images') or req.path == '/api/login'
+        public_paths = ['/', '/login.html', '/register.html']
+        is_public = (
+            req.path in public_paths
+            or req.path.startswith('/css')
+            or req.path.startswith('/js')
+            or req.path.startswith('/images')
+            or req.path == '/api/login'
+        )
+        api_paths = [
+            '/online', '/signal', '/signal_poll',
+            '/submit-info', '/get-list', '/connect-peer', '/broadcast-peer', '/send-peer'
+        ]
+        is_api = (req.path.startswith('/api/') and req.path != '/api/login') or req.path in api_paths
 
         if not is_authenticated and not is_public:
-            # Khách chưa đăng nhập mà dám vào trang riêng tư (VD: form.html) -> Đuổi về trang login
-            response = b"HTTP/1.1 302 Found\r\n"
-            response += b"Location: /login.html\r\n"
-            response += b"Content-Length: 0\r\n\r\n"
+            if is_api:
+                response = self.build_unauthorized_response(req)
+            else:
+                # Khách chưa đăng nhập mà dám vào trang riêng tư (VD: form.html) -> Đuổi về trang login
+                response = b"HTTP/1.1 302 Found\r\n"
+                response += b"Location: /login.html\r\n"
+                response += b"Content-Length: 0\r\n\r\n"
         else:
             # Khách hợp lệ (hoặc đang ở trang Public), cho phép xử lý tiếp
             # Cài cắm cờ Set-Cookie vào thư viện headers của Thủ kho
@@ -234,16 +348,19 @@ class HttpAdapter:
             # a) Kiểm tra vé vào cổng (Cookie session_id)
             if req.cookies and 'session_id' in req.cookies:
                 session_id = req.cookies['session_id']
-                from daemon.httpadapter import ACTIVE_SESSIONS
                 if session_id in ACTIVE_SESSIONS:
                     is_authenticated = True
                     current_user = ACTIVE_SESSIONS[session_id] # Lấy tên User từ RAM
+                else:
+                    user = validate_session(session_id)
+                    if user:
+                        is_authenticated = True
+                        current_user = user
+                        add_session(session_id, user)
 
             # b) Nếu chưa có vé, kiểm tra Mật khẩu (Basic Auth)
             if not is_authenticated and req.auth:
                 import base64
-                import uuid
-                from daemon.httpadapter import VALID_USERS, add_session
                 auth_parts = req.auth.split(' ')
                 if len(auth_parts) == 2 and auth_parts[0] == 'Basic':
                     try:
@@ -258,23 +375,37 @@ class HttpAdapter:
                             current_user = username
                             
                             # Đăng nhập thành công -> Cấp phát Vé (Session UUID)
-                            new_session = str(uuid.uuid4())
+                            new_session = create_session(username)
                             add_session(new_session, username)
                             
                             # Cài đặt tầm hoạt động của Cookie cho toàn bộ Website (Path=/)
-                            new_cookie_to_set = f"session_id={new_session}; Path=/"
+                            new_cookie_to_set = f"session_id={new_session}; Path=/; HttpOnly"
                             req.new_cookie = new_cookie_to_set
                     except Exception as e:
                         pass # Giải mã lỗi hoặc sai cú pháp
 
             # --- PHÂN QUYỀN VÀ ĐIỀU HƯỚNG ---
             # Danh sách các khu vực công cộng ai cũng được vào
-            public_paths = ['/', '/welcome.html', '/login.html', '/register.html']
-            is_public = req.path in public_paths or req.path.startswith('/css') or req.path.startswith('/images') or req.path == '/api/login'
+            public_paths = ['/', '/login.html', '/register.html']
+            is_public = (
+                req.path in public_paths
+                or req.path.startswith('/css')
+                or req.path.startswith('/js')
+                or req.path.startswith('/images')
+                or req.path == '/api/login'
+            )
+            api_paths = [
+                '/online', '/signal', '/signal_poll',
+                '/submit-info', '/get-list', '/connect-peer', '/broadcast-peer', '/send-peer'
+            ]
+            is_api = (req.path.startswith('/api/') and req.path != '/api/login') or req.path in api_paths
 
             if not is_authenticated and not is_public:
-                # Kẻ lạ mặt xâm nhập khu vực kín -> Đuổi về trang Đăng nhập (Mã 302)
-                response = b"HTTP/1.1 302 Found\r\nLocation: /login.html\r\nContent-Length: 0\r\n\r\n"
+                if is_api:
+                    response = self.build_unauthorized_response(req)
+                else:
+                    # Kẻ lạ mặt xâm nhập khu vực kín -> Đuổi về trang Đăng nhập (Mã 302)
+                    response = b"HTTP/1.1 302 Found\r\nLocation: /login.html\r\nContent-Length: 0\r\n\r\n"
             else:
                 # Khách hợp lệ -> Kẹp thẻ Cookie mới (nếu có) vào tay ông Thủ kho
                 if new_cookie_to_set:

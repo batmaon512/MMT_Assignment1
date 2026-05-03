@@ -1,21 +1,70 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
-    <title>bksysnet@hcmut welcome</title>
-
-    <meta charset="utf-8" />
-    <meta http-equiv="Content-type" content="text/html; charset=utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="stylesheet" href="css/styles.css" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AsynapRous Chat</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/index.css">
 </head>
-
 <body>
-<div>
-    <h1>bksysnet@hcmut  Domain</h1>
-    <p>This domain is for use in illustrative examples in documents.
-    </p>
-  
-       <img src="images/welcome.png" alt="bksysnet at HCMUT" width="500" height="600">  
-</div>
+  <div class="topbar">
+    <div class="top-user" id="topUser">Signed in as: ...</div>
+  </div>
+
+  <div class="app">
+
+    <!-- User Registration Box -->
+    <div class="sidebar">
+
+      <!-- Tools -->
+      <aside class="panel">
+        <div class="header">Tools</div>
+        <div class="toolbox">
+          <button id="channelBtn" class="btn primary">Create Channel</button>
+          <button id="logoutBtn" class="btn danger">Logout</button>
+        </div>
+      </aside>
+
+      <!-- Online list -->
+      <aside class="panel online">
+        <div class="header">Online</div>
+        <div id="onlineList" class="online-list"></div>
+      </aside>
+
+    </div>
+
+    <!-- Chats -->
+    <aside class="panel chats" role="navigation" aria-label="Chats">
+      <div class="header">
+        <div class="title">Chats</div>
+      </div>
+      <div class="chat-list" id="chatList"></div>
+    </aside>
+
+    <!-- Messages -->
+    <section class="panel messages" role="main" aria-label="Messages">
+      <div class="header">
+        <div class="title">Messages</div>
+      </div>
+
+      <div class="conversation" id="conversation"></div>
+
+      <div class="composer">
+          <textarea id="composer" placeholder="Write a message..."></textarea>
+
+          <div class="btn-group">
+                <button id="sendBtn" class="btn send-btn">Send</button>
+                <button id="sendAllBtn" class="btn send-all-btn">Send All</button>
+          </div>
+      </div>
+    </section>
+
+  </div>
+
+  <div id="notifyBox" class="notify-container"></div>
+  <script src="js/index.js"></script>
 </body>
 </html>

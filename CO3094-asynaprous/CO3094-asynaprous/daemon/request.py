@@ -81,7 +81,7 @@ class Request():
             method, path, version = first_line.split()
 
             if path == '/':
-                path = '/welcome.html'
+                path = '/login.html'
         except Exception:
             return None, None, None
 

@@ -158,21 +158,28 @@ class Response():
 
         # Processing mime_type based on main_type and sub_type
         main_type, sub_type = mime_type.split('/', 1)
-        print("[Response] Processing main_type={} sub_type={}".format(main_type,sub_type))
+        print("[Response] Processing main_type={} sub_type={}".format(main_type, sub_type))
         if main_type == 'text':
-            self.headers['Content-Type']='text/{}'.format(sub_type)
+            self.headers['Content-Type'] = 'text/{}'.format(sub_type)
             if sub_type == 'plain' or sub_type == 'css':
-                base_dir = BASE_DIR+"static/"
+                base_dir = BASE_DIR + "static/"
             elif sub_type == 'html':
-                base_dir = BASE_DIR+"www/"
+                base_dir = BASE_DIR + "www/"
+            elif sub_type == 'javascript':
+                base_dir = BASE_DIR + "static/"
+                self.headers['Content-Type'] = 'application/javascript'
             else:
                 self.handle_text_other(main_type, sub_type)
         elif main_type == 'image':
-            base_dir = BASE_DIR+"static/"
-            self.headers['Content-Type']='image/{}'.format(sub_type)
+            base_dir = BASE_DIR + "static/"
+            self.headers['Content-Type'] = 'image/{}'.format(sub_type)
         elif main_type == 'application':
-            base_dir = BASE_DIR+"apps/"
-            self.headers['Content-Type']='application/{}'.format(sub_type)
+            if sub_type in ['javascript', 'x-javascript']:
+                base_dir = BASE_DIR + "static/"
+                self.headers['Content-Type'] = 'application/javascript'
+            else:
+                base_dir = BASE_DIR + "apps/"
+                self.headers['Content-Type'] = 'application/{}'.format(sub_type)
         elif main_type == 'video':
             base_dir = BASE_DIR+"video/"
             self.headers['Content-Type']='video/{}'.format(sub_type)
@@ -310,6 +317,8 @@ class Response():
             base_dir = self.prepare_content_type(mime_type = 'text/html')
         elif mime_type == 'text/css':
             base_dir = self.prepare_content_type(mime_type = 'text/css')
+        elif mime_type in ['application/javascript', 'application/x-javascript', 'text/javascript']:
+            base_dir = self.prepare_content_type(mime_type = 'application/javascript')
         elif mime_type == 'application/json' or mime_type == 'application/octet-stream':
             base_dir = self.prepare_content_type(mime_type = 'application/json')
             envelop_content = ""
