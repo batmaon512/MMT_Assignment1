@@ -3,62 +3,87 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>AsynapRous Chat</title>
+  <title>AsynapRous Chat — Hybrid P2P</title>
+  <meta name="description" content="Hybrid P2P Chat Application built on AsynapRous framework">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/index.css">
 </head>
 <body>
+
+  <!-- Top bar -->
   <div class="topbar">
-    <div class="top-user" id="topUser">Signed in as: ...</div>
+    <div class="topbar-left">
+      <span class="app-logo">⬡</span>
+      <span class="app-name">AsynapRous</span>
+    </div>
+    <div class="topbar-right">
+      <span class="top-user" id="topUser">Connecting...</span>
+      <button id="logoutBtn" class="btn-icon" title="Logout">⏻</button>
+    </div>
   </div>
 
   <div class="app">
 
-    <!-- User Registration Box -->
+    <!-- Left Sidebar: Online Peers -->
     <div class="sidebar">
+      <aside class="panel online-panel">
+        <div class="header">
+          <span>Online Peers</span>
+          <span class="badge" id="onlineCount">0</span>
+        </div>
+        <div id="onlineList" class="online-list"></div>
 
-      <!-- Tools -->
-      <aside class="panel">
-        <div class="header">Tools</div>
-        <div class="toolbox">
-          <button id="channelBtn" class="btn primary">Create Channel</button>
-          <button id="logoutBtn" class="btn danger">Logout</button>
+        <!-- Create Channel Panel (shown when ≥1 user selected) -->
+        <div id="createChannelPanel" class="create-channel-panel hidden">
+          <div class="cc-title">
+            <span id="selectedCount">0</span> peer(s) selected
+          </div>
+          <input type="text" id="channelNameInput" class="cc-input"
+                 placeholder="Channel name (optional)" maxlength="40" />
+          <div class="cc-actions">
+            <button id="channelBtn" class="btn primary" title="Create a new P2P channel">
+              ＋ Create Channel
+            </button>
+            <button id="clearSelBtn" class="btn ghost">Clear</button>
+          </div>
         </div>
       </aside>
-
-      <!-- Online list -->
-      <aside class="panel online">
-        <div class="header">Online</div>
-        <div id="onlineList" class="online-list"></div>
-      </aside>
-
     </div>
 
-    <!-- Chats -->
-    <aside class="panel chats" role="navigation" aria-label="Chats">
+    <!-- Channel List -->
+    <aside class="panel chats" role="navigation" aria-label="Channels">
       <div class="header">
-        <div class="title">Chats</div>
+        <div class="title">Channels</div>
+        <span class="badge" id="channelCount">0</span>
       </div>
       <div class="chat-list" id="chatList"></div>
     </aside>
 
     <!-- Messages -->
     <section class="panel messages" role="main" aria-label="Messages">
-      <div class="header">
-        <div class="title">Messages</div>
+      <div class="msg-header" id="msgHeader">
+        <div class="msg-header-left">
+          <div class="title" id="channelTitle">Select a channel</div>
+          <div class="channel-members" id="channelMembers"></div>
+        </div>
+        <div class="connection-status" id="connectionStatus">
+          <span class="dot offline"></span> Tracker
+        </div>
       </div>
 
-      <div class="conversation" id="conversation"></div>
+      <div class="conversation" id="conversation">
+        <div class="empty-state" id="emptyState">
+          <div class="empty-icon">💬</div>
+          <div>Select a channel or create one by clicking a peer on the left</div>
+        </div>
+      </div>
 
       <div class="composer">
-          <textarea id="composer" placeholder="Write a message..."></textarea>
-
-          <div class="btn-group">
-                <button id="sendBtn" class="btn send-btn">Send</button>
-                <button id="sendAllBtn" class="btn send-all-btn">Send All</button>
-          </div>
+        <textarea id="composer" placeholder="Write a message… (Enter to send, Shift+Enter for newline)"
+                  rows="1"></textarea>
+        <button id="sendBtn" class="btn send-btn" title="Send message">➤</button>
       </div>
     </section>
 
