@@ -42,10 +42,24 @@
           </div>
           <input type="text" id="channelNameInput" class="cc-input"
                  placeholder="Channel name (optional)" maxlength="40" />
+
+          <!-- Public / Private toggle -->
+          <div class="access-toggle">
+            <label class="toggle-option">
+              <input type="radio" name="channelAccess" value="public" id="accessPublic" checked>
+              <span>🌐 Public</span>
+            </label>
+            <label class="toggle-option">
+              <input type="radio" name="channelAccess" value="private" id="accessPrivate">
+              <span>🔒 Private</span>
+            </label>
+          </div>
+
+          <input type="password" id="channelPassword" class="cc-input hidden"
+                 placeholder="Set password..." maxlength="64" />
+
           <div class="cc-actions">
-            <button id="channelBtn" class="btn primary" title="Create a new P2P channel">
-              ＋ Create Channel
-            </button>
+            <button id="channelBtn" class="btn primary">＋ Create Channel</button>
             <button id="clearSelBtn" class="btn ghost">Clear</button>
           </div>
         </div>
@@ -68,8 +82,11 @@
           <div class="title" id="channelTitle">Select a channel</div>
           <div class="channel-members" id="channelMembers"></div>
         </div>
-        <div class="connection-status" id="connectionStatus">
-          <span class="dot offline"></span> Tracker
+        <div class="msg-header-right">
+          <button id="addMemberBtn" class="btn-add-member hidden" title="Add member to channel">＋ Add</button>
+          <div class="connection-status" id="connectionStatus">
+            <span class="dot offline"></span> Tracker
+          </div>
         </div>
       </div>
 
@@ -87,6 +104,35 @@
       </div>
     </section>
 
+  </div>
+
+  <!-- Modal: Password prompt (for joining private channel) -->
+  <div id="passwordModal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-icon">🔒</div>
+      <h3 class="modal-title" id="passwordModalTitle">Private Channel</h3>
+      <p class="modal-desc" id="passwordModalDesc">Enter password to join this channel:</p>
+      <input type="password" id="passwordModalInput" class="cc-input"
+             placeholder="Password..." autocomplete="off" />
+      <div class="cc-actions" style="margin-top: 10px;">
+        <button id="passwordModalOk" class="btn primary">Join</button>
+        <button id="passwordModalCancel" class="btn ghost">Decline</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Add Member -->
+  <div id="addMemberModal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-icon">👥</div>
+      <h3 class="modal-title">Add Member</h3>
+      <p class="modal-desc">Select online peers to invite:</p>
+      <div id="addMemberList" class="add-member-list"></div>
+      <div class="cc-actions" style="margin-top: 10px;">
+        <button id="addMemberOk" class="btn primary">Send Invite</button>
+        <button id="addMemberCancel" class="btn ghost">Cancel</button>
+      </div>
+    </div>
   </div>
 
   <div id="notifyBox" class="notify-container"></div>
