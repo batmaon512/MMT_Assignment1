@@ -20,7 +20,6 @@ let currentName = null;
 let currentChannel = null;
 const selectedUsers = new Set();
 const channelInfo = {};
-const connectSentTime = new Map();
 let peerRegistry = [];
 
 // --- INIT SESSION FROM COOKIE ---
@@ -52,21 +51,26 @@ function initializeUserSession() {
         topUserEl.textContent = "Signed in as: Guest";
     }
 }
+
 async function registerPeer() {
     if (!currentName) return;
     const payload = {
         name: currentName,
         ip: window.location.hostname,
-        port: window.location.port
+        // port is the Python server's own port, let the server fill it in via own_port
+        // We still send it so the tracker knows which port to use for P2P
+        port: window.location.port || 8001
     };
     try {
-        await fetch("/submit-info", {
+        const res = await fetch("/submit-info", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
         });
+        const data = await res.json();
+        console.log("[Peer] Registered:", data);
     } catch (err) {
-        // Ignore registration errors.
+        console.error("[Peer] Registration error:", err);
     }
 }
 
@@ -89,7 +93,7 @@ async function refreshPeerList() {
 
 initializeUserSession();
 
-function sendAllMessages() {
+async function sendAllMessages() {
     const channelIDs = Object.keys(channelInfo);
     if (channelIDs.length === 0) {
         pushNotify("No channels to send yet.", 2500);
@@ -115,30 +119,32 @@ function sendAllMessages() {
 
         updateChannel(chID);
 
-        const msg = JSON.stringify({
-            type: "channel_message",
-            id: chID,
-            content: channelInfo[chID],
-            nmsg: nmsg,
-            from: currentName
-        });
-
-        channelInfo[chID].members.forEach(memberName => {
-            const dc = dataChannels[memberName];
-            if (dc && dc.readyState === "open") {
-                try {
-                    dc.send(msg);
-                } catch (e) {
-                    console.error("Send error to", memberName, e);
-                }
+        const payload = {
+            from: currentName,
+            message: {
+                type: "channel_message",
+                id: chID,
+                content: channelInfo[chID],
+                nmsg: nmsg,
+                from: currentName
             }
-        });
+        };
+
+        try {
+            await fetch("/broadcast-peer", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+        } catch (e) {
+            console.error("Broadcast error", e);
+        }
     }
 
     if (currentChannel) loadMessages(currentChannel);
 }
 
-function sendMessage() {
+async function sendMessage() {
     if (!currentChannel) {
         pushNotify("Select a channel first.", 2000);
         return;
@@ -164,37 +170,30 @@ function sendMessage() {
     loadMessages(currentChannel);
     updateChannel(currentChannel);
 
-    const msg = JSON.stringify({
+    const payloadTemplate = {
         type: "channel_message",
         id: currentChannel,
         content: channelInfo[currentChannel],
         nmsg: nmsg,
         from: currentName
-    });
+    };
 
     channelInfo[currentChannel].members.forEach(memberName => {
-        const dc = dataChannels[memberName];
-        if (dc && dc.readyState === "open") {
-            try {
-                dc.send(msg);
-            } catch (e) {
-                console.error("Send error to", memberName, e);
-            }
-        }
+        if (memberName === currentName) return;
+        
+        fetch("/send-peer", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                from: currentName,
+                to: memberName,
+                message: payloadTemplate
+            })
+        }).catch(e => console.error("Send error to", memberName, e));
     });
 }
 
-const lastMessageTime = {}; 
-function handleData(e) {
-    let dataObj;
-    try {
-        dataObj = JSON.parse(e.data);
-    } catch (err) {
-        console.error("Cannot parse e.data:", e.data, err);
-        return;
-    }
-    lastMessageTime[dataObj.from] = Date.now();
-
+function handleData(dataObj) {
     if (dataObj.type) {
         switch (dataObj.type) {
             case "notify":
@@ -212,6 +211,7 @@ function handleData(e) {
 
                 if (!channelInfo[id]) {
                     channelInfo[id] = incoming;
+                    updateChannel(id);
                     break;
                 }
 
@@ -229,7 +229,8 @@ function handleData(e) {
                     ...incoming,
                     messages: mergedMessages,
                 };
-
+                updateChannel(id);
+                if (currentChannel === id) loadMessages(id);
                 break;
             case "ping":
                 break;
@@ -252,6 +253,11 @@ async function createChannel() {
     const members = Array.from(selectedUsers);
     members.push(currentName);
     selectedUsers.clear();
+    
+    // Update UI selected state
+    document.querySelectorAll('.online-box.selected').forEach(box => {
+        box.classList.remove('selected');
+    });
 
     const owner = currentName;
     const channelId = "ch_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
@@ -265,196 +271,33 @@ async function createChannel() {
         messages: {}
     };
 
+    updateChannel(channelId);
     pushNotify("Channel created.", 1500);
 }
 
-const peerConnections = {};
-const dataChannels = {};
-const tryConnections = new Set();
-
-async function autoConnect() {
-    for (const chId in channelInfo) {
-        const ch = channelInfo[chId];
-        if (!ch.members.includes(currentName)) continue;
-        for (const peerName of ch.members) {
-            if (peerName === currentName) continue;
-            if (tryConnections.has(peerName)) continue;
-            tryConnections.add(peerName);
-            connectPeer(peerName);
-        }
-    }
-}
-
-setInterval(autoConnect, 1000);
-
-function isPeerConnected(peerName) {
-    const pc = peerConnections[peerName];
-    const dc = dataChannels[peerName];
-
-    if (!pc || !dc) return false;
-
-    const okPC =
-        pc.connectionState === "connected" ||
-        pc.connectionState === "connecting" ||
-        pc.connectionState === "new";
-
-    const okDC =
-        dc &&
-        (dc.readyState === "open" || dc.readyState === "connecting");
-
-    const lastTime = lastMessageTime[peerName];
-    if (!lastTime) return false;
-
-    const within3s = (Date.now() - lastTime) <= 3000;
-
-    return okPC && okDC && within3s;
-}
-
-async function connectPeer(peerName) {
-    if (isPeerConnected(peerName)) {
-        return;
-    }
-
-    const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
-    peerConnections[peerName] = pc;
-
-    const dc = pc.createDataChannel("chat");
-    dataChannels[peerName] = dc;
-    connectSentTime.set(peerName, Date.now());
-    dc.onopen = () => {
-        pushNotify(`Connected to ${peerName}`);
-    };
-    dc.onmessage = handleData;
-    pc.onicecandidate = (event) => {
-        if (event.candidate) {
-            fetch("/signal", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    from: currentName,
-                    to: peerName,
-                    type: "candidate",
-                    candidate: event.candidate
-                })
-            });
-        }
-    };
-
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-
-    await fetch("/signal", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            from: currentName,
-            to: peerName,
-            type: "offer",
-            offer: offer
-        })
-    });
-}
-
-function createPeerForIncoming(peerName) {
-    const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
-    peerConnections[peerName] = pc;
-    connectSentTime.set(peerName, Date.now());
-
-    pc.ondatachannel = (e) => {
-        const dc = e.channel;
-        dataChannels[peerName] = dc;
-
-        dc.onopen = () => {
-            pushNotify(`Connected to ${peerName}`);
-        };
-
-        dc.onmessage = handleData;
-    };
-
-    pc.onicecandidate = (event) => {
-        if (event.candidate) {
-            fetch("/signal", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    from: currentName,
-                    to: peerName,
-                    type: "candidate",
-                    candidate: event.candidate
-                })
-            });
-        }
-    };
-}
-
-async function pollSignals() {
+async function pollMessages() {
     if (!currentName) return;
 
     try {
-        const res = await fetch("/signal_poll", {
+        const res = await fetch("/poll-messages", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                name: currentName
-            })
+            headers: { "Content-Type": "application/json" }
         });
 
         const data = await res.json();
-        if (!Array.isArray(data.messages)) return;
-
-        for (const msg of data.messages) {
-            const from = msg.from;
-
-            if (!peerConnections[from]) {
-                createPeerForIncoming(from);
-            }
-
-            const pc = peerConnections[from];
-
-            switch (msg.type) {
-                case "offer":
-                    createPeerForIncoming(from);
-                    const pc2 = peerConnections[from];
-
-                    await pc2.setRemoteDescription(new RTCSessionDescription(msg.offer));
-
-                    const answer = await pc2.createAnswer();
-                    await pc2.setLocalDescription(answer);
-
-                    await fetch("/signal", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            from: currentName,
-                            to: from,
-                            type: "answer",
-                            answer: answer
-                        })
-                    });
-
-                    break;
-
-                case "answer":
-                    if (pc.signalingState === "have-local-offer") {
-                        pc.setRemoteDescription(new RTCSessionDescription(msg.answer));
-                    }
-                    break;
-
-                case "candidate":
-                    if (msg.candidate) {
-                        try { await pc.addIceCandidate(msg.candidate); }
-                        catch (err) { }
-                    }
-                    break;
+        if (data.code === 1 && Array.isArray(data.messages)) {
+            for (const msg of data.messages) {
+                if (msg.message) {
+                    handleData(msg.message);
+                }
             }
         }
-
     } catch (err) {
-        console.error("pollSignals error:", err);
+        // Ignore polling errors.
     }
 }
 
-setInterval(pollSignals, 1000);
+setInterval(pollMessages, 1000);
 
 function pushNotify(message, timeout = 3000) {
     const box = document.getElementById("notifyBox");
@@ -521,13 +364,23 @@ async function updateOnlineList() {
             box.appendChild(nameDiv);
 
             box.addEventListener("click", () => {
-                connectPeer(fullName);
                 if (selectedUsers.has(fullName)) {
                     selectedUsers.delete(fullName);
                     box.classList.remove("selected");
                 } else {
                     selectedUsers.add(fullName);
                     box.classList.add("selected");
+                    fetch("/connect-peer", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ target: fullName })
+                    }).then(r => r.json()).then(data => {
+                        if (data.code === 1) {
+                            pushNotify(`Connected to ${fullName}`);
+                        } else {
+                            pushNotify(`Could not connect to ${fullName}`);
+                        }
+                    }).catch(e => console.error(e));
                 }
             });
 
@@ -648,34 +501,25 @@ function startChannelUpdater() {
 
             if (!channel || !channel.members) continue;
 
-            const msg = JSON.stringify({
+            const payloadTemplate = {
                 type: "channel_message",
                 id: id,
                 content: channel,
                 from: currentName
-            });
+            };
 
             channel.members.forEach(memberName => {
-                const dc = dataChannels[memberName];
-                if (dc && dc.readyState === "open") {
-                    try {
-                        dc.send(msg);
-                    } catch (e) {
-                        console.error("Send error to", memberName, e);
-                    }
-                }
+                if (memberName === currentName) return;
+                fetch("/send-peer", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        from: currentName,
+                        to: memberName,
+                        message: payloadTemplate
+                    })
+                }).catch(e => console.error("Channel update error to", memberName, e));
             });
-        }
-
-        for (const peerName in dataChannels) {
-            const dc = dataChannels[peerName];
-            if (dc && dc.readyState === "open") {
-                try {
-                    dc.send(JSON.stringify({ type: "ping", from: currentName }));
-                } catch (e) {
-                    console.error("Ping send error to", peerName, e);
-                }
-            }
         }
     }, 1000);
 }

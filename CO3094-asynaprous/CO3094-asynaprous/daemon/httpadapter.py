@@ -285,10 +285,12 @@ class HttpAdapter:
             or req.path.startswith('/js')
             or req.path.startswith('/images')
             or req.path == '/api/login'
+            or req.path == '/internal/receive-msg'  # peer-to-peer: no auth needed
         )
         api_paths = [
             '/online', '/signal', '/signal_poll',
-            '/submit-info', '/get-list', '/connect-peer', '/broadcast-peer', '/send-peer'
+            '/submit-info', '/get-list', '/connect-peer', '/broadcast-peer', '/send-peer',
+            '/poll-messages'
         ]
         is_api = (req.path.startswith('/api/') and req.path != '/api/login') or req.path in api_paths
 
@@ -393,10 +395,12 @@ class HttpAdapter:
                 or req.path.startswith('/js')
                 or req.path.startswith('/images')
                 or req.path == '/api/login'
+                or req.path == '/internal/receive-msg'  # peer-to-peer: no auth needed
             )
             api_paths = [
                 '/online', '/signal', '/signal_poll',
-                '/submit-info', '/get-list', '/connect-peer', '/broadcast-peer', '/send-peer'
+                '/submit-info', '/get-list', '/connect-peer', '/broadcast-peer', '/send-peer',
+                '/poll-messages'
             ]
             is_api = (req.path.startswith('/api/') and req.path != '/api/login') or req.path in api_paths
 
@@ -414,16 +418,18 @@ class HttpAdapter:
                 # Báo cho Master Router biết Khách này tên gì
                 req.user = current_user
                 
-                # 3. GỌI MASTER ROUTER (Quyết định trả file HTML hay gọi hàm API)
+                # PHÂN LỒNG XỬ LÝ (GIAO HẾT CHO LỚP API TRUNG TÂM QUYẾT ĐỊNH)
                 from daemon.api import master_api_handler
                 response = master_api_handler(req, resp)
+                # Nếu handler là async coroutine (dùng AsynapRous), cần await để lấy kết quả
+                if asyncio.iscoroutine(response):
+                    response = await response
 
             # Đảm bảo kết quả cuối cùng phải là dạng Bytes (Nhị phân)
             if isinstance(response, str):
                 response = response.encode()
 
             # 4. GỬI DỮ LIỆU BẤT ĐỒNG BỘ
-            # Đổ dữ liệu vào ống nước (writer). Gặp mạng chậm, CPU lại 'ngủ đông' nhường chỗ.
             writer.write(response)
             await writer.drain()
 
