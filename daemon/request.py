@@ -48,6 +48,7 @@ class Request():
         "body",
         "routes",
         "hook",
+        "remote_addr",
     ]
 
     def __init__(self):
@@ -73,6 +74,8 @@ class Request():
         self.routes = {}
         #: Hook point for routed mapped-path
         self.hook = None
+        #: Remote address (ip, port)
+        self.remote_addr = None
 
     def extract_request_line(self, request):
         try:

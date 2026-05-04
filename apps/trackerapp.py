@@ -33,6 +33,11 @@ def submit_info(req):
         ip = data.get("ip", "")
         port = data.get("port")
         
+        # Smart IP detection: Nếu IP gửi lên là localhost/trống, lấy IP thực từ kết nối
+        if not ip or ip in ["localhost", "127.0.0.1", "::1"]:
+            if hasattr(req, "remote_addr") and req.remote_addr:
+                ip = req.remote_addr[0]
+
         if not name:
             return json_response({"code": 0, "message": "Missing name"})
             

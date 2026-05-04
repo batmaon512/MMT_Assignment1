@@ -234,6 +234,7 @@ class HttpAdapter:
         print("="*40 + "\n")
         
         req.prepare(msg, routes)
+        req.remote_addr = addr
         print("[HttpAdapter] Invoke handle_client connection {}".format(addr))
 
         # --- BẮT ĐẦU KIỂM TRA BẢO MẬT (AUTHENTICATION & COOKIE) ---
@@ -285,8 +286,10 @@ class HttpAdapter:
             or req.path.startswith('/js')
             or req.path.startswith('/images')
             or req.path == '/api/login'
-            or req.path == '/api/logout'  # logout must always be accessible
-            or req.path == '/internal/receive-msg'  # peer-to-peer: no auth needed
+            or req.path == '/api/logout'
+            or req.path == '/internal/receive-msg'
+            or req.path == '/online'      # Cho phép Tracker nhận lệnh online
+            or req.path == '/submit-info'  # Cho phép Tracker nhận info
         )
         api_paths = [
             '/online', '/signal', '/signal_poll',
@@ -342,6 +345,7 @@ class HttpAdapter:
             
             # 2. PHÂN TÍCH GÓI TIN (Giao cho lớp Request phân tách Header/Body)
             req.prepare(msg_bytes.decode('utf-8', errors='replace'), routes)
+            req.remote_addr = addr
 
             # --- BẮT ĐẦU KIỂM TRA BẢO MẬT (AUTHENTICATION & COOKIE) ---
             is_authenticated = False
@@ -396,8 +400,10 @@ class HttpAdapter:
                 or req.path.startswith('/js')
                 or req.path.startswith('/images')
                 or req.path == '/api/login'
-                or req.path == '/api/logout'  # logout must always be accessible
-                or req.path == '/internal/receive-msg'  # peer-to-peer: no auth needed
+                or req.path == '/api/logout'
+                or req.path == '/internal/receive-msg'
+                or req.path == '/online'      # Public cho Tracker
+                or req.path == '/submit-info'  # Public cho Tracker
             )
             api_paths = [
                 '/online', '/signal', '/signal_poll',
