@@ -5,6 +5,7 @@ let currentName = null, currentChannel = null;
 const selectedUsers = new Set();
 const addMemberSel = new Set();
 const channelInfo = {};
+const declinedChannels = new Set(); // Track channels user declined or failed password
 let pendingInvite = null;
 let currentOnlineNames = [];
 
@@ -241,6 +242,9 @@ function showInviteToast(invite) {
 
     toast.querySelector('.inv-decline').addEventListener('click', () => {
         dismiss();
+        declinedChannels.add(id); // Mark locally
+        // Notify host to remove me from members list
+        fetch('/send-peer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({from:currentName,to:from,message:{type:'invite_declined',id,from:currentName}})}).catch(()=>{});
         pushNotify(`Declined invite to "${name}".`, 2000);
     });
 
@@ -254,7 +258,11 @@ function handleData(d) {
     switch (d.type) {
         case 'channel_message': {
             const {content:inc, id, nmsg} = d; if (!inc||!id) break;
-            if (!channelInfo[id]) { channelInfo[id]=inc; renderChannelItem(id); pushNotify(`Synced channel "${inc.name}"`); break; }
+            if (!channelInfo[id]) {
+                // Only auto-add if user hasn't explicitly declined or failed password
+                if (declinedChannels.has(id)) break;
+                channelInfo[id]=inc; renderChannelItem(id); pushNotify(`Synced channel "${inc.name}"`); break;
+            }
             const local = channelInfo[id];
             channelInfo[id] = {...local,...inc, password:local.password, messages:{...local.messages,...(inc.messages||{})}};
             if (nmsg&&nmsg.from!==currentName&&currentChannel!==id) pushNotify(`${nmsg.from}: ${nmsg.content.slice(0,60)}`);
@@ -284,7 +292,17 @@ function handleData(d) {
             }
             break;
         }
-        case 'join_denied': { pushNotify(`Wrong password. Access denied.`,4000,true); break; }
+        case 'join_denied': { declinedChannels.add(d.id); pushNotify(`Wrong password. Access denied.`,4000,true); break; }
+        case 'invite_declined': {
+            const {id, from:decliner} = d; const ch=channelInfo[id];
+            if (ch && ch.host===currentName) {
+                ch.members = ch.members.filter(m=>m!==decliner);
+                renderChannelItem(id);
+                if (currentChannel===id) channelMembersEl.textContent=ch.members.join(' · ');
+                addSystemMessage(id, `${decliner} declined the invite.`);
+            }
+            break;
+        }
         case 'member_added': {
             const {id,newMember} = d; const ch=channelInfo[id]; if (!ch||ch.members.includes(newMember)) break;
             ch.members.push(newMember); connectToPeer(newMember);

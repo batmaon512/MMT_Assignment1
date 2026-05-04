@@ -285,6 +285,7 @@ class HttpAdapter:
             or req.path.startswith('/js')
             or req.path.startswith('/images')
             or req.path == '/api/login'
+            or req.path == '/api/logout'  # logout must always be accessible
             or req.path == '/internal/receive-msg'  # peer-to-peer: no auth needed
         )
         api_paths = [
@@ -395,6 +396,7 @@ class HttpAdapter:
                 or req.path.startswith('/js')
                 or req.path.startswith('/images')
                 or req.path == '/api/login'
+                or req.path == '/api/logout'  # logout must always be accessible
                 or req.path == '/internal/receive-msg'  # peer-to-peer: no auth needed
             )
             api_paths = [
