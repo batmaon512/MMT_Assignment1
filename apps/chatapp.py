@@ -135,8 +135,13 @@ async def make_tracker_request_async(path, data, req=None):
     try:
         headers = {'Content-Type': 'application/json'}
         cookie = ""
-        if req and req.headers and 'cookie' in req.headers:
-            cookie = req.headers['cookie']
+        auth_header = ""
+        if req and req.headers:
+            if 'cookie' in req.headers:
+                cookie = req.headers['cookie']
+            # Forward Authorization header if present so tracker can authenticate
+            if 'authorization' in req.headers:
+                auth_header = req.headers['authorization']
 
         body = json.dumps(data).encode('utf-8')
         http_request = (
@@ -145,10 +150,16 @@ async def make_tracker_request_async(path, data, req=None):
             f"Content-Type: application/json\r\n"
             f"Content-Length: {len(body)}\r\n"
             + (f"Cookie: {cookie}\r\n" if cookie else "")
+            + (f"Authorization: {auth_header}\r\n" if auth_header else "")
             + f"Connection: close\r\n\r\n"
         ).encode('utf-8') + body
 
         reader, writer = await asyncio.open_connection(tracker_ip, tracker_port)
+        # Debug: show outgoing request to tracker
+        try:
+            print("[ChatApp] Outgoing tracker request:\n", http_request.decode('utf-8', errors='replace'))
+        except Exception:
+            pass
         writer.write(http_request)
         await writer.drain()
 
@@ -162,6 +173,11 @@ async def make_tracker_request_async(path, data, req=None):
         writer.close()
         await writer.wait_closed()
 
+        # Debug: show raw response from tracker
+        try:
+            print("[ChatApp] Raw tracker response:\n", resp_bytes.decode('utf-8', errors='replace'))
+        except Exception:
+            pass
         # Parse HTTP response body
         if b"\r\n\r\n" in resp_bytes:
             resp_body = resp_bytes.split(b"\r\n\r\n", 1)[1]
@@ -176,8 +192,12 @@ def make_tracker_request(path, data, req=None):
     url = f"http://{tracker_ip}:{tracker_port}{path}"
     try:
         headers = {'Content-Type': 'application/json'}
-        if req and req.headers and 'cookie' in req.headers:
-            headers['Cookie'] = req.headers['cookie']
+        if req and req.headers:
+            if 'cookie' in req.headers:
+                headers['Cookie'] = req.headers['cookie']
+            # Forward Authorization header if present
+            if 'authorization' in req.headers:
+                headers['Authorization'] = req.headers['authorization']
         urllib_req = urllib_request.Request(url, data=json.dumps(data).encode('utf-8'), headers=headers)
         with urllib_request.urlopen(urllib_req, timeout=5) as response:
             return json.loads(response.read().decode('utf-8'))

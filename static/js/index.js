@@ -31,12 +31,30 @@ const getCookie = name => { const v = `; ${document.cookie}`.split(`; ${name}=`)
 const formatTime = ts => new Date(ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
 const stripPwd = ch => { const {password,...safe}=ch; return safe; };
 
-function pushNotify(msg, t=3000, err=false) {
+function pushNotify(text, t=2000, sticky=false) {
     const n = document.createElement('div');
-    n.className = 'notify' + (err?' error':'');
-    n.textContent = msg;
-    $('notifyBox').appendChild(n);
-    setTimeout(() => { n.classList.add('hide'); setTimeout(()=>n.remove(),400); }, t);
+    n.className = 'notify';
+    n.textContent = text;
+    const box = document.getElementById('notifyBox') || document.body;
+    box.appendChild(n);
+    if (!sticky) {
+        setTimeout(() => { n.classList.add('hide'); setTimeout(()=>n.remove(), 400); }, t);
+    }
+}
+
+function saveState() {
+    localStorage.setItem('chatapp_channels', JSON.stringify(channelInfo));
+}
+
+function loadState() {
+    const saved = localStorage.getItem('chatapp_channels');
+    if (saved) {
+        try {
+            const data = JSON.parse(saved);
+            Object.assign(channelInfo, data);
+            Object.keys(channelInfo).forEach(id => renderChannelItem(id));
+        } catch (e) { console.error("Failed to load state", e); }
+    }
 }
 
 function addSystemMessage(chId, text) {
@@ -44,6 +62,7 @@ function addSystemMessage(chId, text) {
     ch.messages['sys_'+Date.now()] = { from:'__system__', content:text, time:Date.now(), system:true };
     if (currentChannel===chId) loadMessages(chId);
     renderChannelItem(chId);
+    saveState();
 }
 
 /* ── Session ── */
@@ -121,6 +140,7 @@ function createChannel() {
     document.querySelectorAll('.online-box.selected').forEach(b=>b.classList.remove('selected'));
 
     renderChannelItem(chId); selectChannel(chId);
+    saveState();
     pushNotify(`Channel "${chName}" created (${isPriv?'🔒 Private':'🌐 Public'}).`, 2500);
     members.filter(m=>m!==currentName).forEach(m=>sendInvite(chId,m));
 }
@@ -267,6 +287,7 @@ function handleData(d) {
             channelInfo[id] = {...local,...inc, password:local.password, messages:{...local.messages,...(inc.messages||{})}};
             if (nmsg&&nmsg.from!==currentName&&currentChannel!==id) pushNotify(`${nmsg.from}: ${nmsg.content.slice(0,60)}`);
             renderChannelItem(id); if (currentChannel===id) loadMessages(id);
+            saveState();
             break;
         }
         case 'channel_invite': {
@@ -405,5 +426,6 @@ passwordModalInput.addEventListener('keydown', e=>{ if(e.key==='Enter') submitPa
 setInterval(updateOnlineList, 2000);
 setInterval(pollMessages, 1000);
 setInterval(()=>Object.keys(channelInfo).forEach(syncChannelToPeers), 5000);
+loadState();
 initializeUserSession();
 sendBtn.disabled = true;
