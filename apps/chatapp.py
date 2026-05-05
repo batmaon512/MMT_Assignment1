@@ -104,6 +104,42 @@ def peers(req):
     peers = [{"name": n, "ip": info.get("ip"), "port": info.get("port")} for n, info in PEER_CACHE.items()]
     return json_response({"code": 1, "peers": peers})
 
+async def resolve_peer(name, req=None, refresh=False):
+    """Resolve a peer from local cache, optionally refreshing from tracker."""
+    global PEER_CACHE
+    target = (name or "").strip()
+    if not target:
+        return None, "missing-name"
+
+    peer = PEER_CACHE.get(target)
+    if peer and not refresh:
+        return {"name": target, **peer}, "cache"
+
+    peers_res = await make_tracker_request_async("/get-list", {}, req)
+    if peers_res.get("code") == 1:
+        for p in peers_res.get("peers", []):
+            pname = (p.get("name") or "").strip()
+            if pname:
+                PEER_CACHE[pname] = {"ip": p.get("ip"), "port": p.get("port")}
+        peer = PEER_CACHE.get(target)
+        if peer:
+            return {"name": target, **peer}, "tracker"
+
+    if peer:
+        return {"name": target, **peer}, "cache-stale"
+    return None, "not-found"
+
+@app.route('/resolve-peer', methods=['POST'])
+async def resolve_peer_api(req):
+    body = req.body
+    data = json.loads(body) if body else {}
+    target = data.get("target") or data.get("name")
+    refresh = bool(data.get("refresh"))
+    peer, source = await resolve_peer(target, req, refresh=refresh)
+    if not peer:
+        return json_response({"code": 0, "message": "Peer not found", "source": source})
+    return json_response({"code": 1, "peer": peer, "source": source})
+
 @app.route('/online', methods=['POST'])
 async def online(req):
     body = req.body
@@ -114,29 +150,17 @@ async def online(req):
 
 @app.route('/connect-peer', methods=['POST'])
 async def connect_peer(req):
-    global PEER_CACHE
     body = req.body
     data = json.loads(body) if body else {}
     target = data.get("target")
     if not target:
         return json_response({"code": 0, "message": "Missing target"})
 
-    # Check local cache first (works even without tracker)
-    if target in PEER_CACHE:
-        peer = PEER_CACHE[target]
-        return json_response({"code": 1, "message": "Connected (cached)", "peer": {"name": target, **peer}})
-
-    # Fall back to tracker
-    peers_res = await make_tracker_request_async("/get-list", {}, req)
-    peers = peers_res.get("peers", [])
-    target_peer = next((p for p in peers if p["name"] == target), None)
-
-    if target_peer:
-        # Store in local cache for future offline use
-        PEER_CACHE[target] = {"ip": target_peer["ip"], "port": target_peer["port"]}
-        return json_response({"code": 1, "message": "Connected", "peer": target_peer})
-    else:
-        return json_response({"code": 0, "message": "Peer not found"})
+    peer, source = await resolve_peer(target, req)
+    if peer:
+        message = "Connected (cached)" if source.startswith("cache") else "Connected"
+        return json_response({"code": 1, "message": message, "peer": peer, "source": source})
+    return json_response({"code": 0, "message": "Peer not found"})
 
 async def make_tracker_request_async(path, data, req=None):
     """Non-blocking call to tracker using asyncio.open_connection."""
@@ -237,7 +261,6 @@ async def send_to_peer(target_ip, target_port, payload):
 
 @app.route('/send-peer', methods=['POST'])
 async def send_peer(req):
-    global PEER_CACHE
     body = req.body
     data = json.loads(body) if body else {}
     target_name = data.get("to")
@@ -247,17 +270,7 @@ async def send_peer(req):
     if not target_name or not message:
         return json_response({"code": 0, "message": "Missing fields"})
 
-    # Try local cache first (P2P - no tracker needed)
-    target_peer = PEER_CACHE.get(target_name)
-
-    if not target_peer:
-        # Fall back to tracker
-        peers_res = await make_tracker_request_async("/get-list", {}, req)
-        peers = peers_res.get("peers", [])
-        found = next((p for p in peers if p["name"] == target_name), None)
-        if found:
-            PEER_CACHE[target_name] = {"ip": found["ip"], "port": found["port"]}
-            target_peer = PEER_CACHE[target_name]
+    target_peer, _source = await resolve_peer(target_name, req)
 
     if not target_peer:
         return json_response({"code": 0, "message": f"Peer '{target_name}' not found (tracker offline?)"})
