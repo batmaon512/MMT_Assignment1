@@ -277,19 +277,24 @@ class HttpAdapter:
                 except Exception as e:
                     print("Lỗi giải mã Auth:", e)
 
-        # 3. Phân quyền và Quyết định (Authorization & Routing)
-        # Các đường dẫn được phép truy cập tự do không cần đăng nhập
+        # Guard: neu request rong hoac bi loi parse thi dong ket noi
+        if not req.path:
+            conn.close()
+            return
+
+        # 3. Phan quyen va Quyet dinh (Authorization & Routing)
         public_paths = ['/', '/login.html', '/register.html']
         is_public = (
             req.path in public_paths
             or req.path.startswith('/css')
             or req.path.startswith('/js')
             or req.path.startswith('/images')
+            or req.path.startswith('/benchmark')
             or req.path == '/api/login'
             or req.path == '/api/logout'
             or req.path == '/internal/receive-msg'
-            or req.path == '/online'      # Cho phép Tracker nhận lệnh online
-            or req.path == '/submit-info'  # Cho phép Tracker nhận info
+            or req.path == '/online'
+            or req.path == '/submit-info'
         )
         api_paths = [
             '/online', '/signal', '/signal_poll',
@@ -297,6 +302,7 @@ class HttpAdapter:
             '/poll-messages'
         ]
         is_api = (req.path.startswith('/api/') and req.path != '/api/login') or req.path in api_paths
+
 
         if not is_authenticated and not is_public:
             if is_api:
@@ -307,19 +313,17 @@ class HttpAdapter:
                 response += b"Location: /login.html\r\n"
                 response += b"Content-Length: 0\r\n\r\n"
         else:
-            # Khách hợp lệ (hoặc đang ở trang Public), cho phép xử lý tiếp
-            # Cài cắm cờ Set-Cookie vào thư viện headers của Thủ kho
             if new_cookie_to_set:
                 resp.headers['Set-Cookie'] = new_cookie_to_set
-            
-            # Gắn tên người dùng vào Request để Lớp API biết ai đang truy cập
             req.user = current_user
 
-            # PHÂN LỒNG XỬ LÝ (GIAO HẾT CHO LỚP API TRUNG TÂM QUYẾT ĐỊNH)
             from daemon.api import master_api_handler
             response = master_api_handler(req, resp)
 
-        #print("[HttpAdapter] Response content {}".format(response))
+            # Neu handler la async (coroutine), chay dong bo trong threading mode
+            if asyncio.iscoroutine(response):
+                response = asyncio.run(response)
+
         if isinstance(response, str):
             response = response.encode()
         conn.sendall(response)
@@ -391,19 +395,25 @@ class HttpAdapter:
                     except Exception as e:
                         pass # Giải mã lỗi hoặc sai cú pháp
 
-            # --- PHÂN QUYỀN VÀ ĐIỀU HƯỚNG ---
-            # Danh sách các khu vực công cộng ai cũng được vào
+            # Guard: neu request rong hoac bi loi parse
+            if not req.path:
+                writer.close()
+                await writer.wait_closed()
+                return
+
+            # --- PHAN QUYEN VA DIEU HUONG ---
             public_paths = ['/', '/login.html', '/register.html']
             is_public = (
                 req.path in public_paths
                 or req.path.startswith('/css')
                 or req.path.startswith('/js')
                 or req.path.startswith('/images')
+                or req.path.startswith('/benchmark')
                 or req.path == '/api/login'
                 or req.path == '/api/logout'
                 or req.path == '/internal/receive-msg'
-                or req.path == '/online'      # Public cho Tracker
-                or req.path == '/submit-info'  # Public cho Tracker
+                or req.path == '/online'
+                or req.path == '/submit-info'
             )
             api_paths = [
                 '/online', '/signal', '/signal_poll',
@@ -411,6 +421,7 @@ class HttpAdapter:
                 '/poll-messages'
             ]
             is_api = (req.path.startswith('/api/') and req.path != '/api/login') or req.path in api_paths
+
 
             if not is_authenticated and not is_public:
                 if is_api:

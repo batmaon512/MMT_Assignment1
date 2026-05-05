@@ -149,28 +149,14 @@ def run_backend(ip, port, routes):
 
     import select
     
-    # --- 1. Tạo Socket cho HTTP (Ví dụ: port 9000) ---
+    # Tao Socket cho HTTP
     server_http = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_http.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    
-    # --- 2. Tạo Socket cho HTTPS (Ví dụ: port 9001) ---
-    server_https = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_https.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
     try:
-        # Khởi động server HTTP
         server_http.bind((ip, port))
         server_http.listen(50)
         print("[Backend] Listening on port {} (HTTP)".format(port))
-        
-        # Khởi động server HTTPS
-        https_port = port + 1
-        server_https.bind((ip, https_port))
-        server_https.listen(50)
-        context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-        context.load_cert_chain(certfile="cert.pem", keyfile="key.pem")
-        server_https = context.wrap_socket(server_https, server_side=True)
-        print("[Backend] Listening on port {} (HTTPS enabled)".format(https_port))
 
         if routes != {}:
             print("[Backend] route settings")
@@ -180,38 +166,26 @@ def run_backend(ip, port, routes):
                   isCoFunc += "**ASYNC** "
                print("   + ('{}', '{}'): {}{}".format(key[0], key[1], isCoFunc, str(value)))
 
-        # Lắng nghe chung cả 2 socket
-        sockets_to_listen = [server_http, server_https]
-
         while True:
-            # Dùng select để chờ socket nào có khách gõ cửa
-            readable, _, _ = select.select(sockets_to_listen, [], [])
-            
+            readable, _, _ = select.select([server_http], [], [])
             for s in readable:
                 try:
-                    # Accept connection
                     conn, addr = s.accept()
                 except Exception as e:
-                    print("[Backend] SSL/Accept error: {}".format(e))
+                    print("[Backend] Accept error: {}".format(e))
                     continue
 
-                if mode_async == "callback":
-                   # Callback implementation - Event driven architecture
-                   s.setblocking(False)
-                   events = sel.select(timeout=None)
-                   for key, mask in events:
-                       callback, cb_ip, cb_port, cb_routes = key.data
-                       callback(key.fileobj, cb_ip, cb_port, conn, addr, cb_routes)
+                if mode_async == "threading":
+                    client_thread = threading.Thread(
+                        target=handle_client,
+                        args=(ip, port, conn, addr, routes)
+                    )
+                    client_thread.daemon = True
+                    client_thread.start()
 
-                elif mode_async == "threading":
-                   # Baseline multi-thread implementation
-                   # Gửi port thực tế mà khách kết nối vào (port hoặc https_port)
-                   actual_port = port if s is server_http else https_port
-                   client_thread = threading.Thread(target=handle_client, args=(ip, actual_port, conn, addr, routes))
-                   client_thread.daemon = True
-                   client_thread.start()
     except socket.error as e:
       print("Socket error: {}".format(e))
+
 
 def create_backend(ip, port, routes={}):
     """

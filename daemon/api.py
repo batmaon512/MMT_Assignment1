@@ -1,4 +1,5 @@
 import json
+import os
 import threading
 import time
 from .response import Response
@@ -313,6 +314,135 @@ def app_signal_poll(req):
 
     return _json_response(req, {"code": 1, "messages": messages})
 
+# Path tuyet doi den anh benchmark
+_BENCHMARK_IMAGE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "static", "images", "benchmark_1.jpg"
+)
+
+def app_benchmark_image(req):
+    """
+    Tra ve file anh benchmark_1.jpg tu static/images/.
+    Hoat dong voi ca coroutine lan threading mode.
+    """
+    try:
+        with open(_BENCHMARK_IMAGE_PATH, 'rb') as f:
+            image_data = f.read()
+
+        resp = Response()
+        resp.status_code = 200
+        resp.reason = "OK"
+        resp._content = image_data
+        resp.headers['Content-Type'] = 'image/jpeg'
+        resp.headers['Cache-Control'] = 'no-cache'
+
+        header_str = resp.build_response_header(req)
+        return header_str + resp._content
+
+    except FileNotFoundError:
+        body = b'{"error": "benchmark_1.jpg not found"}'
+        resp = Response()
+        resp.status_code = 404
+        resp.reason = "Not Found"
+        resp._content = body
+        resp.headers['Content-Type'] = 'application/json'
+        header_str = resp.build_response_header(req)
+        return header_str + resp._content
+
+
+async def app_benchmark_image_async(req):
+    """
+    Phien ban async cua app_benchmark_image — dung cho coroutine mode.
+    Doc file trong thread rieng de khong block event loop.
+    """
+    import asyncio
+    loop = asyncio.get_event_loop()
+    try:
+        image_data = await loop.run_in_executor(
+            None,
+            lambda: open(_BENCHMARK_IMAGE_PATH, 'rb').read()
+        )
+        resp = Response()
+        resp.status_code = 200
+        resp.reason = "OK"
+        resp._content = image_data
+        resp.headers['Content-Type'] = 'image/jpeg'
+        resp.headers['Cache-Control'] = 'no-cache'
+        header_str = resp.build_response_header(req)
+        return header_str + resp._content
+    except FileNotFoundError:
+        body = b'{"error": "benchmark_1.jpg not found"}'
+        resp = Response()
+        resp.status_code = 404
+        resp.reason = "Not Found"
+        resp._content = body
+        resp.headers['Content-Type'] = 'application/json'
+        header_str = resp.build_response_header(req)
+        return header_str + resp._content
+
+
+# ──────────────────────────────────────────────────────────────
+#  BENCHMARK ENDPOINTS
+#  Muc dich: so sanh dung coroutine vs threading
+#
+#  /benchmark/sync  - dung time.sleep() → block thread
+#                     Threading: moi thread bi treo rieng → khong anh huong nhau
+#                     Coroutine: block ca event loop → tat ca request bi treo!
+#
+#  /benchmark/async - dung asyncio.sleep() → nhuong CPU cho event loop
+#                     Coroutine: event loop phuc vu cac request khac trong luc cho
+#                     Threading: moi thread van bi treo (khong co loi ich)
+#
+#  Ket qua mong doi:
+#    - /benchmark/sync  → Threading thang (moi thread doc lap)
+#    - /benchmark/async → Coroutine thang (event loop xu ly dong thoi)
+# ──────────────────────────────────────────────────────────────
+
+# Do tre gia lap network/DB latency (giay)
+BENCHMARK_DELAY = 0.05  # 50ms — tuong duong LAN latency
+
+
+def app_benchmark_sync(req):
+    """
+    Benchmark endpoint cho threading mode.
+    Dung time.sleep() de gia lap I/O wait (network, DB...).
+    Moi thread bi block doc lap → threading xu ly tot voi concurrency vua phai.
+    """
+    import time as _time
+    _time.sleep(BENCHMARK_DELAY)
+    payload = '{"mode": "sync", "delay_ms": ' + str(int(BENCHMARK_DELAY * 1000)) + ', "status": "ok"}'
+    body = payload.encode('utf-8')
+    resp = Response()
+    resp.status_code = 200
+    resp.reason = "OK"
+    resp._content = body
+    resp.headers['Content-Type'] = 'application/json'
+    resp.headers['Cache-Control'] = 'no-cache'
+    header_str = resp.build_response_header(req)
+    return header_str + resp._content
+
+
+async def app_benchmark_async(req):
+    """
+    Benchmark endpoint cho coroutine mode.
+    Dung asyncio.sleep() de gia lap I/O wait.
+    Event loop KHONG bi block: trong 50ms cho, no phuc vu tat ca request khac.
+    Day la dieu threading khong the lam duoc o concurrency cao.
+    """
+    import asyncio as _asyncio
+    await _asyncio.sleep(BENCHMARK_DELAY)
+    payload = '{"mode": "async", "delay_ms": ' + str(int(BENCHMARK_DELAY * 1000)) + ', "status": "ok"}'
+    body = payload.encode('utf-8')
+    resp = Response()
+    resp.status_code = 200
+    resp.reason = "OK"
+    resp._content = body
+    resp.headers['Content-Type'] = 'application/json'
+    resp.headers['Cache-Control'] = 'no-cache'
+    header_str = resp.build_response_header(req)
+    return header_str + resp._content
+
+
 # API route table
 API_ROUTES = {
     # POST/PUT handlers
@@ -332,7 +462,11 @@ API_ROUTES = {
     # GET handlers
     ('GET', '/hello'): app_hello,
     ('GET', '/status'): app_status,
-    ('GET', '/api/me'): app_me
+    ('GET', '/api/me'): app_me,
+    ('GET', '/benchmark_1.jpg'): app_benchmark_image_async,
+    # Benchmark endpoints (chon dung endpoint theo mode)
+    ('GET', '/benchmark/sync'): app_benchmark_sync,
+    ('GET', '/benchmark/async'): app_benchmark_async,
 }
 
 def master_api_handler(req, resp):
