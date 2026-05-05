@@ -96,6 +96,14 @@ async def get_list(req):
                 PEER_CACHE[name] = {"ip": peer.get("ip"), "port": peer.get("port")}
     return json_response(res)
 
+
+@app.route('/peers', methods=['POST'])
+def peers(req):
+    """Return the locally cached peers (name, ip, port)."""
+    global PEER_CACHE
+    peers = [{"name": n, "ip": info.get("ip"), "port": info.get("port")} for n, info in PEER_CACHE.items()]
+    return json_response({"code": 1, "peers": peers})
+
 @app.route('/online', methods=['POST'])
 async def online(req):
     body = req.body

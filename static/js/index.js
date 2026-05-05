@@ -26,6 +26,44 @@ const passwordModalTitle = $("passwordModalTitle"), passwordModalDesc = $("passw
 const addMemberModal = $("addMemberModal"), addMemberList = $("addMemberList");
 const addMemberOk = $("addMemberOk"), addMemberCancel = $("addMemberCancel");
 
+/* ── Peer panel (debug) ── */
+const peerPanelBtn = document.createElement('button');
+peerPanelBtn.id = 'showPeersBtn';
+peerPanelBtn.textContent = 'Show peers';
+peerPanelBtn.style.cssText = 'margin-left:8px;padding:6px 8px;border-radius:6px;border:1px solid #cbd5e1;background:white;cursor:pointer;font-size:12px';
+connectionStatusEl.parentNode.insertBefore(peerPanelBtn, connectionStatusEl.nextSibling);
+
+const peerPanel = document.createElement('div');
+peerPanel.id = 'peerPanel';
+peerPanel.style.cssText = 'position:fixed;right:12px;bottom:12px;width:300px;max-height:240px;overflow:auto;background:white;border:1px solid #e2e8f0;padding:8px;border-radius:8px;box-shadow:0 6px 18px rgba(2,6,23,0.08);display:none;z-index:9999;font-size:13px';
+document.body.appendChild(peerPanel);
+
+async function fetchAndRenderPeers() {
+    try {
+        const r = await fetch('/peers', { method: 'POST', headers: {'Content-Type':'application/json'} });
+        const d = await r.json();
+        if (d.code !== 1 || !Array.isArray(d.peers)) { peerPanel.innerHTML = '<div style="color:#ef4444">No peers</div>'; return; }
+        if (!d.peers.length) { peerPanel.innerHTML = '<div style="color:#64748b">No cached peers</div>'; return; }
+        peerPanel.innerHTML = '<div style="font-weight:700;margin-bottom:6px">Known peers</div>' + d.peers.map(p=>`<div style="padding:6px;border-radius:6px;border:1px solid #f1f5f9;margin-bottom:6px"><div style="font-weight:600">${p.name}</div><div style="color:#64748b;font-size:12px">${p.ip}:${p.port}</div></div>`).join('');
+    } catch (e) {
+        peerPanel.innerHTML = '<div style="color:#ef4444">Error fetching peers</div>';
+    }
+}
+
+let peerPanelInterval = null;
+peerPanelBtn.addEventListener('click', () => {
+    if (peerPanel.style.display === 'none') {
+        peerPanel.style.display = 'block';
+        fetchAndRenderPeers();
+        peerPanelInterval = setInterval(() => { if (peerPanel.style.display==='block') fetchAndRenderPeers(); }, 5000);
+        peerPanelBtn.textContent = 'Hide peers';
+    } else {
+        peerPanel.style.display = 'none';
+        clearInterval(peerPanelInterval); peerPanelInterval = null;
+        peerPanelBtn.textContent = 'Show peers';
+    }
+});
+
 /* ── Helpers ── */
 const getCookie = name => { const v = `; ${document.cookie}`.split(`; ${name}=`); return v.length===2?v.pop().split(';').shift():null; };
 const formatTime = ts => new Date(ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
