@@ -112,11 +112,20 @@ function initializeUserSession() {
 
 // Fetch authoritative username from server (avoid stale cookie issues)
 async function fetchCurrentUser() {
+    const cookieUser = getCookie('account');
     try {
-        const res = await fetch('/api/me');
-        if (!res.ok) { window.location.href = '/login.html'; return; }
+        const res = await fetch('/api/me', { credentials: 'include' });
+        if (!res.ok) {
+            if (!cookieUser) { window.location.href = '/login.html'; return; }
+            currentName = cookieUser;
+            topUserEl.textContent = cookieUser;
+            sendBtn.disabled = false;
+            pushNotify(`Welcome, ${cookieUser}!`);
+            await registerPeer();
+            return;
+        }
         const data = await res.json();
-        const username = data.username || null;
+        const username = data.username || cookieUser || null;
         if (!username) { window.location.href = '/login.html'; return; }
         currentName = username;
         topUserEl.textContent = username;
@@ -124,7 +133,17 @@ async function fetchCurrentUser() {
         pushNotify(`Welcome, ${username}!`);
         // Immediately register with tracker using authoritative name
         await registerPeer();
-    } catch (e) { window.location.href = '/login.html'; }
+    } catch (e) {
+        if (!cookieUser) {
+            window.location.href = '/login.html';
+            return;
+        }
+        currentName = cookieUser;
+        topUserEl.textContent = cookieUser;
+        sendBtn.disabled = false;
+        pushNotify(`Welcome, ${cookieUser}!`);
+        await registerPeer();
+    }
 }
 
 /* ── Phase 1: Tracker ── */
