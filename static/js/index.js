@@ -110,6 +110,23 @@ function initializeUserSession() {
     else { window.location.href='/login.html'; }
 }
 
+// Fetch authoritative username from server (avoid stale cookie issues)
+async function fetchCurrentUser() {
+    try {
+        const res = await fetch('/api/me');
+        if (!res.ok) { window.location.href = '/login.html'; return; }
+        const data = await res.json();
+        const username = data.username || null;
+        if (!username) { window.location.href = '/login.html'; return; }
+        currentName = username;
+        topUserEl.textContent = username;
+        sendBtn.disabled = false;
+        pushNotify(`Welcome, ${username}!`);
+        // Immediately register with tracker using authoritative name
+        await registerPeer();
+    } catch (e) { window.location.href = '/login.html'; }
+}
+
 /* ── Phase 1: Tracker ── */
 async function registerPeer() {
     if (!currentName) return;
@@ -465,5 +482,5 @@ setInterval(updateOnlineList, 2000);
 setInterval(pollMessages, 1000);
 setInterval(()=>Object.keys(channelInfo).forEach(syncChannelToPeers), 5000);
 loadState();
-initializeUserSession();
+fetchCurrentUser();
 sendBtn.disabled = true;

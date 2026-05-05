@@ -31,6 +31,47 @@ def get_lan_ip():
 MY_LAN_IP = get_lan_ip()
 print(f"[Tracker] Detected LAN IP: {MY_LAN_IP}")
 
+def resolve_peer_ip(candidate_ip, remote_addr):
+    """Resolve peer address to a reachable IPv4 when possible."""
+    ip = (candidate_ip or "").strip()
+
+    # Prefer caller-provided address when valid and not wildcard/loopback.
+    if ip and ip not in ["localhost", "127.0.0.1", "::1", "0.0.0.0"]:
+        try:
+            resolved = socket.gethostbyname(ip)
+            if resolved not in ["127.0.0.1", "0.0.0.0"]:
+                return resolved
+        except Exception:
+            parts = ip.split('.')
+            if len(parts) == 4:
+                try:
+                    if all(0 <= int(p) <= 255 for p in parts) and ip not in ["127.0.0.1", "0.0.0.0"]:
+                        return ip
+                except Exception:
+                    pass
+
+    # Fallback to source socket address.
+    if remote_addr and remote_addr[0] not in ["localhost", "127.0.0.1", "::1", "0.0.0.0"]:
+        return remote_addr[0]
+
+    # Last resort for same-machine client.
+    return MY_LAN_IP
+
+def get_lan_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # Doesn't need to be reachable, just to force OS to pick the right interface
+        s.connect(('8.8.8.8', 1))
+        IP = s.getsockname()[0]
+    except Exception:
+        IP = '127.0.0.1'
+    finally:
+        s.close()
+    return IP
+
+MY_LAN_IP = get_lan_ip()
+print(f"[Tracker] Detected LAN IP: {MY_LAN_IP}")
+
 def json_response(payload, status=200):
     body = json.dumps(payload)
     status_text = "OK" if status == 200 else "Bad Request"
@@ -49,16 +90,14 @@ def submit_info(req):
         name = data.get("name") or getattr(req, "user", "")
         ip = data.get("ip", "")
         port = data.get("port")
-        
-        # Smart IP detection: Nếu IP gửi lên là localhost/trống, lấy IP thực từ kết nối
-        if not ip or ip in ["localhost", "127.0.0.1", "::1"]:
-            if hasattr(req, "remote_addr") and req.remote_addr:
-                ip = req.remote_addr[0]
-            
-            # Nếu sau khi lấy từ remote_addr vẫn là loopback (nghĩa là Client cùng máy với Tracker)
-            # thì ép buộc sử dụng IP LAN của máy này.
-            if ip in ["localhost", "127.0.0.1", "::1"]:
-                ip = MY_LAN_IP
+
+        remote = getattr(req, "remote_addr", None)
+        resolved_ip = resolve_peer_ip(ip, remote)
+        try:
+            print(f"[Tracker] submit-info from remote={remote} candidate_ip={ip!r} resolved={resolved_ip}")
+        except Exception:
+            pass
+        ip = resolved_ip
 
         if not name:
             return json_response({"code": 0, "message": "Missing name"})
@@ -75,7 +114,11 @@ def submit_info(req):
         cleanup_online(now)
         
         print(f"[Tracker] Registered: {name} at {ip}:{port}")
-        
+        try:
+            print(f"[Tracker] Current registry: {PEER_REGISTRY}")
+        except Exception:
+            pass
+
         return json_response({"code": 1, "message": "Registered successfully"})
     except Exception as e:
         print(f"[Tracker] Error in submit_info: {e}")
@@ -92,6 +135,10 @@ def get_list(req):
             for name, info in PEER_REGISTRY.items()
             if ONLINE.get(name)
         ]
+        try:
+            print(f"[Tracker] get-list -> returning peers={peers}")
+        except Exception:
+            pass
         return json_response({"code": 1, "peers": peers})
     except Exception as e:
         return json_response({"code": 0, "error": str(e)})
