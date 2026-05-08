@@ -63,9 +63,9 @@ if __name__ == "__main__":
     parser.add_argument(
         '--mode',
         type=str,
-        default='coroutine',
-        choices=['coroutine', 'threading'],
-        help='Server mode: coroutine (async) or threading. Default is coroutine.'
+        default='callback',
+        choices=['coroutine', 'threading', 'callback'],
+        help='Server mode: coroutine (asyncio), threading, or callback (custom select event loop). Default is callback.'
     )
  
     args = parser.parse_args()

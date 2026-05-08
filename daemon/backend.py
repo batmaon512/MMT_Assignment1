@@ -55,7 +55,7 @@ from .dictionary import CaseInsensitiveDict
 import selectors
 sel = selectors.DefaultSelector()
 
-mode_async = "coroutine"
+mode_async = "callback"
 
 def handle_client(ip, port, conn, addr, routes):
     """
@@ -140,11 +140,17 @@ def run_backend(ip, port, routes):
     # This global variable to configure the asynchrnous mode or not
     global mode_async
 
-    print("[Backend] run_backend with routes={}".format(routes))
-    # Process async stream for registering the service and terminate
-    if mode_async == "coroutine":
+    print("[Backend] run_backend mode={} routes={}".format(mode_async, routes))
 
+    # --- Mode 1: Coroutine (asyncio) ---
+    if mode_async == "coroutine":
        asyncio.run(async_server(ip, port, routes))
+       return
+
+    # --- Mode 3: Callback (select()) ---
+    if mode_async == "callback":
+       from .eventloop import run_select_server
+       run_select_server(ip, port, routes)
        return
 
     import select

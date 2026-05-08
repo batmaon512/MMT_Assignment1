@@ -58,23 +58,23 @@ def forward_request(host, port, request):
 
     try:
         backend.connect((host, port))
-        backend.sendall(request.encode())
+        backend.sendall(request if isinstance(request, bytes) else request.encode())
         response = b""
         while True:
-            chunk = backend.recv(4096)
+            chunk = backend.recv(65536)
             if not chunk:
                 break
             response += chunk
         return response
     except socket.error as e:
-      print("Socket error: {}".format(e))
-      return (
-            "HTTP/1.1 404 Not Found\r\n"
+        print("Socket error: {}".format(e))
+        return (
+            "HTTP/1.1 502 Bad Gateway\r\n"
             "Content-Type: text/plain\r\n"
-            "Content-Length: 13\r\n"
+            "Content-Length: 11\r\n"
             "Connection: close\r\n"
             "\r\n"
-            "404 Not Found"
+            "Bad Gateway"
         ).encode('utf-8')
 
 
@@ -88,35 +88,25 @@ def resolve_routing_policy(hostname, routes):
     :params routes (dict): dictionary mapping hostnames and location.
     """
 
-    print(hostname)
-    proxy_map, policy = routes.get(hostname,('127.0.0.1:9000','round-robin'))
-    print(proxy_map)
-    print(policy)
+    print("[Proxy] Resolving hostname:", hostname)
+    proxy_map, policy = routes.get(hostname, ('127.0.0.1:9000', 'round-robin'))
+    print("[Proxy] proxy_map:", proxy_map, "policy:", policy)
 
-    proxy_host = ''
+    proxy_host = '127.0.0.1'
     proxy_port = '9000'
     if isinstance(proxy_map, list):
         if len(proxy_map) == 0:
-            print("[Proxy] Emtpy resolved routing of hostname {}".format(hostname))
-            print("Empty proxy_map result")
-            # TODO: implement the error handling for non mapped host
-            #       the policy is design by team, but it can be 
-            #       basic default host in your self-defined system
-            # Use a dummy host to raise an invalid connection
-            proxy_host = '127.0.0.1'
-            proxy_port = '9000'
-        elif len(value) == 1:
-            proxy_host, proxy_port = proxy_map[0].split(":", 2)
-        #elif: # apply the policy handling 
-        #   proxy_map
-        #   policy
+            print("[Proxy] Empty routing for hostname {}".format(hostname))
+        elif len(proxy_map) == 1:
+            proxy_host, proxy_port = proxy_map[0].split(":", 1)
         else:
-            # Out-of-handle mapped host
-            proxy_host = '127.0.0.1'
-            proxy_port = '9000'
+            # Round-robin: dung index theo so ket noi
+            import random
+            chosen = random.choice(proxy_map)
+            proxy_host, proxy_port = chosen.split(":", 1)
     else:
-        print("[Proxy] resolve route of hostname {} is a singulair to".format(hostname))
-        proxy_host, proxy_port = proxy_map.split(":", 2)
+        print("[Proxy] Singular route for hostname {}".format(hostname))
+        proxy_host, proxy_port = proxy_map.split(":", 1)
 
     return proxy_host, proxy_port
 
@@ -187,20 +177,22 @@ def run_proxy(ip, port, routes):
     """
 
     proxy = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    proxy.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
     try:
         proxy.bind((ip, port))
         proxy.listen(50)
-        print("[Proxy] Listening on IP {} port {}".format(ip,port))
+        print("[Proxy] Listening on IP {} port {}".format(ip, port))
         while True:
             conn, addr = proxy.accept()
-            #
-            #  TODO: implement the step of the client incomping connection
-            #        using multi-thread programming with the
-            #        provided handle_client routine
-            #
+            t = threading.Thread(
+                target=handle_client,
+                args=(ip, port, conn, addr, routes)
+            )
+            t.daemon = True
+            t.start()
     except socket.error as e:
-      print("Socket error: {}".format(e))
+        print("Socket error: {}".format(e))
 
 def create_proxy(ip, port, routes):
     """

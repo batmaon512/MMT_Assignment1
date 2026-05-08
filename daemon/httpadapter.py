@@ -196,93 +196,70 @@ class HttpAdapter:
         header_str = resp.build_response_header(req)
         return header_str + resp._content
 
-    def handle_client(self, conn, addr, routes):
+    def process_request(self, raw_msg, addr):
         """
-        Handle an incoming client connection.
+        Xử lý 1 HTTP request từ chuỗi raw đã có sẵn.
 
-        This method reads the request from the socket, prepares the request object,
-        invokes the appropriate route handler if available, builds the response,
-        and sends it back to the client.
+        Đây là phần lõi của HttpAdapter, tách biệt hoàn toàn khỏi I/O.
+        Được gọi bởi cả 3 mode:
+            - threading    : gọi từ handle_client() sau khi recv() xong
+            - coroutine    : gọi từ handle_client_coroutine() sau await read()
+            - callback     : gọi từ eventloop.make_http_handler() sau select() recv
 
-        :param conn (socket): The client socket connection.
-        :param addr (tuple): The client's address.
-        :param routes (dict): The route mapping for dispatching requests.
+        :param raw_msg (str): Chuỗi HTTP request thô đã nhận đủ.
+        :param addr (tuple): Địa chỉ (ip, port) của client.
+        :return: bytes — HTTP response hoàn chỉnh sẵn sàng để sendall().
         """
-
-        # Connection handler.
-        self.conn = conn        
-        # Connection address.
-        self.connaddr = addr
-        # Request handler
-        req = self.request
-        # Response handler
+        req  = self.request
         resp = self.response
 
-        # Handle the request
-        msg = ""
-        while True:
-            chunk = conn.recv(1024).decode('utf-8', errors='ignore')
-            if not chunk:
-                break
-            msg += chunk
-            if '\r\n\r\n' in msg:
-                break
-
-        print("\n" + "="*40)
-        print("[HttpAdapter] Raw message from client:")
-        print(msg)
-        print("="*40 + "\n")
-        
-        req.prepare(msg, routes)
+        req.prepare(raw_msg, self.routes)
         req.remote_addr = addr
-        print("[HttpAdapter] Invoke handle_client connection {}".format(addr))
+        print("[HttpAdapter] process_request {} {}".format(
+            getattr(req, 'method', '?'), getattr(req, 'path', '?')
+        ))
 
-        # --- BẮT ĐẦU KIỂM TRA BẢO MẬT (AUTHENTICATION & COOKIE) ---
-        is_authenticated = False
-        current_user = None
+        # Guard: request rỗng hoặc lỗi parse
+        if not req.path:
+            return b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n"
+
+        # ── Xác thực (Authentication) ────────────────────────────────
+        is_authenticated  = False
+        current_user      = None
         new_cookie_to_set = None
 
-        # 1. Kiểm tra Cookie xem có thẻ hợp lệ không
+        # 1. Kiểm tra Cookie session_id
         if req.cookies and 'session_id' in req.cookies:
             session_id = req.cookies['session_id']
             if session_id in ACTIVE_SESSIONS:
                 is_authenticated = True
-                current_user = ACTIVE_SESSIONS[session_id]
+                current_user     = ACTIVE_SESSIONS[session_id]
             else:
                 user = validate_session(session_id)
                 if user:
                     is_authenticated = True
-                    current_user = user
+                    current_user     = user
                     add_session(session_id, user)
 
-        # 2. Nếu chưa có thẻ, kiểm tra xem có gửi Mật khẩu (Basic Auth) không
+        # 2. Nếu chưa có Cookie → kiểm tra Basic Auth
         if not is_authenticated and req.auth:
             import base64
             auth_parts = req.auth.split(' ')
             if len(auth_parts) == 2 and auth_parts[0] == 'Basic':
                 try:
-                    # Giải mã chuỗi YWRtaW46MTIzNDU2 thành admin:123456
-                    decoded_bytes = base64.b64decode(auth_parts[1])
-                    decoded_str = decoded_bytes.decode('utf-8')
+                    decoded_str = base64.b64decode(auth_parts[1]).decode('utf-8')
                     username, password = decoded_str.split(':', 1)
-                    
                     if VALID_USERS.get(username) == password:
-                        is_authenticated = True
-                        current_user = username
-                        # Đăng nhập đúng, cấp thẻ Cookie mới lưu vào RAM
-                        new_session = create_session(username)
+                        is_authenticated  = True
+                        current_user      = username
+                        new_session       = create_session(username)
                         add_session(new_session, username)
                         new_cookie_to_set = f"session_id={new_session}; Path=/; HttpOnly"
-                        req.new_cookie = new_cookie_to_set
+                        req.new_cookie    = new_cookie_to_set
                 except Exception as e:
-                    print("Lỗi giải mã Auth:", e)
+                    print("[HttpAdapter] Auth decode error:", e)
 
-        # Guard: neu request rong hoac bi loi parse thi dong ket noi
-        if not req.path:
-            conn.close()
-            return
-
-        # 3. Phan quyen va Quyet dinh (Authorization & Routing)
+        # ── Phân quyền & Định tuyến ──────────────────────────────────
         public_paths = ['/', '/login.html', '/register.html']
         is_public = (
             req.path in public_paths
@@ -303,161 +280,109 @@ class HttpAdapter:
         ]
         is_api = (req.path.startswith('/api/') and req.path != '/api/login') or req.path in api_paths
 
-
         if not is_authenticated and not is_public:
             if is_api:
-                response = self.build_unauthorized_response(req)
+                return self.build_unauthorized_response(req)
             else:
-                # Khách chưa đăng nhập mà dám vào trang riêng tư (VD: form.html) -> Đuổi về trang login
-                response = b"HTTP/1.1 302 Found\r\n"
-                response += b"Location: /login.html\r\n"
-                response += b"Content-Length: 0\r\n\r\n"
-        else:
-            if new_cookie_to_set:
-                resp.headers['Set-Cookie'] = new_cookie_to_set
-            req.user = current_user
+                return (
+                    b"HTTP/1.1 302 Found\r\n"
+                    b"Location: /login.html\r\n"
+                    b"Content-Length: 0\r\n\r\n"
+                )
 
-            from daemon.api import master_api_handler
-            response = master_api_handler(req, resp)
+        # ── Gọi API handler ──────────────────────────────────────────
+        if new_cookie_to_set:
+            resp.headers['Set-Cookie'] = new_cookie_to_set
+        req.user = current_user
 
-            # Neu handler la async (coroutine), chay dong bo trong threading mode
-            if asyncio.iscoroutine(response):
-                response = asyncio.run(response)
+        from daemon.api import master_api_handler
+        response = master_api_handler(req, resp)
+
+        # Nếu handler là coroutine → chạy đồng bộ
+        if asyncio.iscoroutine(response):
+            response = asyncio.run(response)
 
         if isinstance(response, str):
-            response = response.encode()
+            response = response.encode('utf-8')
+
+        return response
+
+    def handle_client(self, conn, addr, routes):
+        """
+        Handle an incoming client connection (threading mode).
+
+        Đọc dữ liệu từ socket, sau đó ủy quyền toàn bộ logic HTTP
+        cho process_request() — tránh trùng lặp code.
+
+        :param conn (socket): The client socket connection.
+        :param addr (tuple): The client's address.
+        :param routes (dict): The route mapping for dispatching requests.
+        """
+        self.conn    = conn
+        self.connaddr = addr
+
+        # Đọc dữ liệu từ socket (tầng I/O)
+        msg = ""
+        while True:
+            chunk = conn.recv(1024).decode('utf-8', errors='ignore')
+            if not chunk:
+                break
+            msg += chunk
+            if '\r\n\r\n' in msg:
+                break
+
+        print("\n" + "="*40)
+        print("[HttpAdapter] handle_client from {}:".format(addr))
+        print(msg[:200])
+        print("="*40 + "\n")
+
+        # Ủy quyền xử lý HTTP cho process_request() (tầng HTTP)
+        response = self.process_request(msg, addr)
+
         conn.sendall(response)
         conn.close()
 
+
     async def handle_client_coroutine(self, reader, writer):
         """
-        Xử lý kết nối của Khách hàng bằng cơ chế Bất đồng bộ (Async/Await).
-        Siêu bồi bàn (CPU) sẽ không đứng chờ khi tải dữ liệu, mà nhường quyền xử lý cho các kết nối khác.
+        Xử lý kết nối bằng cơ chế Bất đồng bộ (coroutine mode).
+
+        Chỉ chịu trách nhiệm I/O bất đồng bộ:
+            - await reader.read()  → nhận dữ liệu không block event loop
+            - await writer.drain() → gửi response không block event loop
+
+        Toàn bộ logic HTTP (parse, auth, routing) được ủy quyền cho
+        process_request() — tái sử dụng code, không trùng lặp.
         """
         addr = writer.get_extra_info("peername")
-        req = self.request
-        resp = self.response
-        routes = self.routes # Lấy cuốn danh bạ API đã được truyền vào từ Backend
 
         try:
-            # 1. ĐỌC DỮ LIỆU BẤT ĐỒNG BỘ
-            # Nếu Buffer trống, hàm sẽ 'ngủ đông' (await) nhường CPU cho Khách khác. 
-            # Khi gói tin bay tới Buffer, hàm sẽ tự thức dậy làm tiếp!
+            # ── Đọc dữ liệu bất đồng bộ ─────────────────────────────
+            # await nhường CPU cho các kết nối khác trong lúc chờ dữ liệu đến
             msg_bytes = await reader.read(4096)
             if not msg_bytes:
                 return
-            
-            # 2. PHÂN TÍCH GÓI TIN (Giao cho lớp Request phân tách Header/Body)
-            req.prepare(msg_bytes.decode('utf-8', errors='replace'), routes)
-            req.remote_addr = addr
 
-            # --- BẮT ĐẦU KIỂM TRA BẢO MẬT (AUTHENTICATION & COOKIE) ---
-            is_authenticated = False
-            current_user = None
-            new_cookie_to_set = None
+            raw_msg = msg_bytes.decode('utf-8', errors='replace')
 
-            # a) Kiểm tra vé vào cổng (Cookie session_id)
-            if req.cookies and 'session_id' in req.cookies:
-                session_id = req.cookies['session_id']
-                if session_id in ACTIVE_SESSIONS:
-                    is_authenticated = True
-                    current_user = ACTIVE_SESSIONS[session_id] # Lấy tên User từ RAM
-                else:
-                    user = validate_session(session_id)
-                    if user:
-                        is_authenticated = True
-                        current_user = user
-                        add_session(session_id, user)
+            # ── Ủy quyền xử lý HTTP (sync) ──────────────────────────
+            # process_request() xử lý: parse → auth → routing → build response
+            response = self.process_request(raw_msg, addr)
 
-            # b) Nếu chưa có vé, kiểm tra Mật khẩu (Basic Auth)
-            if not is_authenticated and req.auth:
-                import base64
-                auth_parts = req.auth.split(' ')
-                if len(auth_parts) == 2 and auth_parts[0] == 'Basic':
-                    try:
-                        # Giải mã Base64
-                        decoded_bytes = base64.b64decode(auth_parts[1])
-                        decoded_str = decoded_bytes.decode('utf-8')
-                        username, password = decoded_str.split(':', 1)
-                        
-                        # So khớp với CSDL
-                        if VALID_USERS.get(username) == password:
-                            is_authenticated = True
-                            current_user = username
-                            
-                            # Đăng nhập thành công -> Cấp phát Vé (Session UUID)
-                            new_session = create_session(username)
-                            add_session(new_session, username)
-                            
-                            # Cài đặt tầm hoạt động của Cookie cho toàn bộ Website (Path=/)
-                            new_cookie_to_set = f"session_id={new_session}; Path=/; HttpOnly"
-                            req.new_cookie = new_cookie_to_set
-                    except Exception as e:
-                        pass # Giải mã lỗi hoặc sai cú pháp
-
-            # Guard: neu request rong hoac bi loi parse
-            if not req.path:
-                writer.close()
-                await writer.wait_closed()
-                return
-
-            # --- PHAN QUYEN VA DIEU HUONG ---
-            public_paths = ['/', '/login.html', '/register.html']
-            is_public = (
-                req.path in public_paths
-                or req.path.startswith('/css')
-                or req.path.startswith('/js')
-                or req.path.startswith('/images')
-                or req.path.startswith('/benchmark')
-                or req.path == '/api/login'
-                or req.path == '/api/logout'
-                or req.path == '/internal/receive-msg'
-                or req.path == '/online'
-                or req.path == '/submit-info'
-            )
-            api_paths = [
-                '/online', '/signal', '/signal_poll',
-                '/submit-info', '/get-list', '/connect-peer', '/broadcast-peer', '/send-peer',
-                '/poll-messages'
-            ]
-            is_api = (req.path.startswith('/api/') and req.path != '/api/login') or req.path in api_paths
-
-
-            if not is_authenticated and not is_public:
-                if is_api:
-                    response = self.build_unauthorized_response(req)
-                else:
-                    # Kẻ lạ mặt xâm nhập khu vực kín -> Đuổi về trang Đăng nhập (Mã 302)
-                    response = b"HTTP/1.1 302 Found\r\nLocation: /login.html\r\nContent-Length: 0\r\n\r\n"
-            else:
-                # Khách hợp lệ -> Kẹp thẻ Cookie mới (nếu có) vào tay ông Thủ kho
-                if new_cookie_to_set:
-                    resp.headers['Set-Cookie'] = new_cookie_to_set
-                
-                # Báo cho Master Router biết Khách này tên gì
-                req.user = current_user
-                
-                # PHÂN LỒNG XỬ LÝ (GIAO HẾT CHO LỚP API TRUNG TÂM QUYẾT ĐỊNH)
-                from daemon.api import master_api_handler
-                response = master_api_handler(req, resp)
-                # Nếu handler là async coroutine (dùng AsynapRous), cần await để lấy kết quả
-                if asyncio.iscoroutine(response):
-                    response = await response
-
-            # Đảm bảo kết quả cuối cùng phải là dạng Bytes (Nhị phân)
+            # ── Gửi response bất đồng bộ ─────────────────────────────
             if isinstance(response, str):
-                response = response.encode()
+                response = response.encode('utf-8')
 
-            # 4. GỬI DỮ LIỆU BẤT ĐỒNG BỘ
             writer.write(response)
-            await writer.drain()
+            await writer.drain()   # Nhường CPU khi đang flush buffer mạng
 
         except Exception as e:
-            print("[Async Error] Lỗi trong quá trình phục vụ:", e)
+            print("[HttpAdapter] handle_client_coroutine error:", e)
         finally:
-            # Luôn luôn phải dọn dẹp, đóng kết nối khi khách ăn xong!
             writer.close()
             await writer.wait_closed()
+
+
 
     @property
     def extract_cookies(self, req, resp):

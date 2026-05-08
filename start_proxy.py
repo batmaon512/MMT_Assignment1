@@ -113,14 +113,19 @@ if __name__ == "__main__":
     :arg --server-port (int): Port number to bind the server (default: 9000).
     """
 
-    parser = argparse.ArgumentParser(prog='Proxy', description='', epilog='Proxy daemon')
-    parser.add_argument('--server-ip', default='0.0.0.0')
-    parser.add_argument('--server-port', type=int, default=PROXY_PORT)
+    parser = argparse.ArgumentParser(prog='Proxy', description='Proxy daemon', epilog='Proxy daemon')
+    parser.add_argument('--server-ip', default='0.0.0.0',
+                        help='IP address to bind proxy (default: 0.0.0.0)')
+    parser.add_argument('--server-port', type=int, default=PROXY_PORT,
+                        help='Port to bind proxy (default: {})'.format(PROXY_PORT))
+    parser.add_argument('--config', default='config/proxy.conf',
+                        help='Path to proxy config file (default: config/proxy.conf)')
  
     args = parser.parse_args()
     ip = args.server_ip
     port = args.server_port
 
-    routes = parse_virtual_hosts("config/proxy.conf")
+    routes = parse_virtual_hosts(args.config)
+    print("[Proxy] Loaded routes:", routes)
 
     create_proxy(ip, port, routes)

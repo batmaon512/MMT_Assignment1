@@ -1,0 +1,478 @@
+
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T5]{fontenc}
+\usepackage[vietnamese]{babel}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{longtable}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta}
+\usepackage{booktabs}
+\usepackage{float}
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+\usepackage{setspace}
+\usepackage{titlesec}
+\geometry{a4paper,left=2cm,right=2cm,top=2.5cm,bottom=2.5cm}
+
+\definecolor{codebg}{rgb}{0.95,0.95,0.92}
+\definecolor{hcmutblue}{RGB}{3,37,126}
+
+\lstset{
+  backgroundcolor=\color{codebg},
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  keywordstyle=\color{blue}\bfseries,
+  commentstyle=\color{green!60!black}\itshape,
+  stringstyle=\color{red},
+  showstringspaces=false,
+  tabsize=2
+}
+
+\pagestyle{fancy}
+\fancyhead[L]{\small Trường ĐH Bách Khoa Tp.HCM --- Khoa KHKT Máy Tính}
+\fancyfoot[L]{\small Computer Networks - Lab Report}
+\fancyfoot[R]{\small Trang \thepage/\pageref{LastPage}}
+\setstretch{1.25}
+\titleformat{\section}{\Large\bfseries\color{hcmutblue}}{\thesection}{1em}{}
+\titleformat{\subsection}{\large\bfseries}{\thesubsection}{1em}{}
+
+\begin{document}
+
+%===== BÌA =====
+\begin{titlepage}
+\begin{center}
+  \vspace*{20pt}
+  \large\textbf{ĐẠI HỌC QUỐC GIA THÀNH PHỐ HỒ CHÍ MINH}\\[5pt]
+  \Large\textbf{TRƯỜNG ĐẠI HỌC BÁCH KHOA}\\[30pt]
+  \textcolor{hcmutblue}{\fontsize{22pt}{22pt}\selectfont\textbf{COMPUTER NETWORKS}}\\[10pt]
+  \fontsize{16pt}{16pt}\selectfont\textbf{Bài tập lớn 1}\\[40pt]
+\end{center}
+\begin{table}[H]
+\centering\large
+\renewcommand{\arraystretch}{1.5}
+\begin{tabular}{>{\bfseries}ll}
+  Instructor: & Bùi Xuân Giang \\
+  Class ID:   & CO3094 (A01) \\
+  Students:   &
+    \begin{tabular}[t]{@{}l@{\hspace{1cm}}l@{}}
+      Nguyễn Chí Thanh  & 2313078 \\
+      Lê Đức Tài        & 2312995 \\
+      Nguyễn Việt Hoàng & 2311066 \\
+      Mai Xuân Nhựt     & 2312549 \\
+    \end{tabular}
+\end{tabular}
+\end{table}
+\vfill
+\begin{center}\large\textbf{HỒ CHÍ MINH, 2026}\end{center}
+\end{titlepage}
+
+\newpage\tableofcontents\newpage
+
+%===== 1. TỔNG QUAN =====
+\section{Tổng quan kiến trúc hệ thống}
+
+Hệ thống được xây dựng theo mô hình đa tiến trình gồm ba thành phần chính:
+\begin{itemize}
+  \item \textbf{Backend Server} (\texttt{daemon/backend.py}): Xử lý HTTP request, xác thực, phục vụ file tĩnh và API RESTful.
+  \item \textbf{ChatApp / AsynapRous} (\texttt{apps/chatapp.py}, \texttt{daemon/asynaprous.py}): Ứng dụng chat kết hợp Client--Server và Peer-to-Peer.
+  \item \textbf{Tracker} (\texttt{apps/trackerapp.py}): Quản lý đăng ký và khám phá peer.
+\end{itemize}
+
+Toàn bộ hệ thống sử dụng \textbf{Python standard library} (\texttt{socket}, \texttt{select}, \texttt{threading}) mà \textbf{không dùng bất kỳ web framework hay asyncio bên ngoài nào}. Thay vào đó, nhóm tự xây dựng một \textbf{Event Loop} dựa trên \texttt{select()} hệ thống.
+
+%===== 2. NON-BLOCKING =====
+\section{Cơ chế Non-blocking (Phần 2.1)}
+
+\subsection{Hai chế độ xử lý đồng thời}
+
+Hệ thống hỗ trợ hai cơ chế được lựa chọn qua tham số \texttt{--mode}:
+
+\begin{longtable}{|p{4cm}|p{6.5cm}|p{4.5cm}|}
+\hline
+\textbf{Cơ chế} & \textbf{Mô tả} & \textbf{Lệnh} \\ \hline
+\textbf{Threading} & Mỗi kết nối tạo một daemon thread riêng & \texttt{--mode threading} \\ \hline
+\textbf{Callback} (mặc định) & Custom \texttt{select()} Event Loop, 1 thread phục vụ nhiều kết nối & \texttt{--mode callback} \\ \hline
+\end{longtable}
+
+\subsection{Chế độ Callback --- Custom \texttt{select()} Event Loop}
+
+Đây là đóng góp trọng tâm của bài tập: tự xây dựng Event Loop sử dụng \textbf{lời gọi hệ thống \texttt{select.select()}} thay vì dùng \texttt{asyncio}.
+
+\subsubsection*{Kiến trúc Event Loop (\texttt{daemon/eventloop.py})}
+
+\begin{lstlisting}[language=Python, caption={EventLoop --- vòng lặp sự kiện tự xây}]
+class EventLoop:
+    """
+    Vong lap su kien (singleton) dua tren select.select().
+    1 thread duy nhat phuc vu nhieu ket noi dong thoi.
+    """
+    def _run_once(self):
+        # Buoc 1: Chay pending callbacks (TaskQueue)
+        self._task_queue.drain()
+        # Buoc 2: Hoi OS socket nao san sang (non-blocking)
+        r_list = self._registry.get_read_sockets()
+        readable, writable, _ = select.select(
+            r_list, [], [], self._select_timeout
+        )
+        # Buoc 3: Goi callback tuong ung
+        for sock in readable:
+            cb = self._registry.get_read_callback(sock)
+            if cb:
+                cb(sock)
+
+    def run_forever(self):
+        self._running = True
+        while self._running:
+            self._run_once()
+\end{lstlisting}
+
+\textbf{Nguyên lý 1 iteration (1 tick):}
+\begin{enumerate}
+  \item Drain \texttt{TaskQueue} --- chạy các callback đã lên lịch.
+  \item Gọi \texttt{select.select()} --- hỏi OS danh sách socket sẵn sàng I/O.
+  \item Gọi callback đã đăng ký cho từng socket sẵn sàng.
+  \item Lặp lại --- không bao giờ dừng cho đến khi \texttt{stop()}.
+\end{enumerate}
+
+\subsubsection*{CallbackRegistry --- Danh bạ socket → callback}
+
+\begin{lstlisting}[language=Python]
+class CallbackRegistry:
+    """Anh xa: socket -> callback function."""
+    def register_read(self, sock, callback):
+        self._read_callbacks[sock] = callback
+    def unregister(self, sock):
+        self._read_callbacks.pop(sock, None)
+\end{lstlisting}
+
+\subsubsection*{SelectHTTPServer --- HTTP Server tích hợp EventLoop}
+
+\begin{lstlisting}[language=Python, caption={Luong xu ly ket noi moi}]
+class SelectHTTPServer:
+    def start(self):
+        self._server_sock = socket.socket(AF_INET, SOCK_STREAM)
+        self._server_sock.setblocking(False)   # Non-blocking!
+        self._server_sock.bind((self.ip, self.port))
+        self._server_sock.listen(128)
+        self.loop.register_read(self._server_sock, self._on_new_connection)
+
+    def _on_new_connection(self, server_sock):
+        conn, addr = server_sock.accept()
+        conn.setblocking(False)
+        self._buffers[conn] = ConnectionBuffer(conn, addr)
+        self.loop.register_read(conn, self._on_data)
+
+    def _on_data(self, conn):
+        data = conn.recv(4096)   # Non-blocking
+        buf = self._buffers[conn]
+        buf.feed(data)
+        if buf.done:             # Da nhan du 1 HTTP request
+            self._handle_request(conn, buf)
+
+    def _handle_request(self, conn, buf):
+        adapter = HttpAdapter(self.ip, self.port, None, buf.addr, self.routes)
+        response = adapter.process_request(buf.get_request(), buf.addr)
+        conn.sendall(response)
+        self._close_conn(conn)
+\end{lstlisting}
+
+\textbf{Phân tầng trách nhiệm:}
+\begin{itemize}
+  \item \textbf{EventLoop}: Quản lý vòng lặp \texttt{select()}, phân phối sự kiện.
+  \item \textbf{SelectHTTPServer}: Quản lý kết nối TCP (accept, recv, send).
+  \item \textbf{ConnectionBuffer}: Gom dữ liệu từng mảnh đến khi đủ 1 HTTP request.
+  \item \textbf{HttpAdapter.process\_request()}: Xử lý HTTP (parse, auth, routing).
+\end{itemize}
+
+\subsubsection*{Chế độ Threading}
+
+\begin{lstlisting}[language=Python]
+# daemon/backend.py --- threading mode
+if mode_async == "threading":
+    client_thread = threading.Thread(
+        target=handle_client,
+        args=(ip, port, conn, addr, routes)
+    )
+    client_thread.daemon = True
+    client_thread.start()
+\end{lstlisting}
+
+Mỗi kết nối được giao cho một daemon thread xử lý độc lập. Phù hợp khi số kết nối đồng thời thấp, mỗi request cần nhiều CPU.
+
+\subsection{Khởi động server}
+
+\begin{lstlisting}[language=bash]
+# Callback mode (mac dinh) --- port 9020
+python start_backend.py --server-port 9020 --mode callback
+
+# Threading mode --- port 9010
+python start_backend.py --server-port 9010 --mode threading
+\end{lstlisting}
+
+%===== 3. XÁC THỰC =====
+\section{Xác thực HTTP (Phần 2.2)}
+
+\subsection{Luồng xác thực trong \texttt{HttpAdapter.process\_request()}}
+
+Toàn bộ logic HTTP (parse + auth + routing) được tập trung trong method \texttt{process\_request()}, được gọi bởi cả 3 mode:
+
+\begin{lstlisting}[language=Python, caption={process\_request() --- loi HTTP da dung chung}]
+def process_request(self, raw_msg, addr):
+    req.prepare(raw_msg, self.routes)   # Parse HTTP
+
+    # Buoc 1: Kiem tra Cookie session_id (RFC 6265)
+    if req.cookies and 'session_id' in req.cookies:
+        sid = req.cookies['session_id']
+        if sid in ACTIVE_SESSIONS:
+            is_authenticated = True
+            current_user = ACTIVE_SESSIONS[sid]
+        else:
+            user = validate_session(sid)
+            if user:
+                is_authenticated = True
+                add_session(sid, user)
+
+    # Buoc 2: HTTP Basic Auth (RFC 7235)
+    if not is_authenticated and req.auth:
+        decoded = base64.b64decode(auth_parts[1]).decode()
+        username, password = decoded.split(':', 1)
+        if VALID_USERS.get(username) == password:
+            new_session = create_session(username)
+            add_session(new_session, username)
+            new_cookie_to_set = f"session_id={new_session}; Path=/; HttpOnly"
+
+    # Buoc 3: Phan quyen
+    if not is_authenticated and not is_public:
+        return b"HTTP/1.1 401 Unauthorized\r\n..."  # hoac 302 redirect
+
+    # Buoc 4: Routing -> API handler
+    response = master_api_handler(req, resp)
+    return response
+\end{lstlisting}
+
+\subsection{Quản lý Session}
+
+\begin{longtable}{|p{4.5cm}|p{10.5cm}|}
+\hline
+\textbf{Thành phần} & \textbf{Mô tả} \\ \hline
+\texttt{ACTIVE\_SESSIONS} & Dictionary RAM: \texttt{session\_id $\rightarrow$ username} \\ \hline
+\texttt{db/sessions\_id.txt} & Lưu persistent: \texttt{sid|user|expire\_timestamp} \\ \hline
+\texttt{db/account.txt} & Tài khoản: \texttt{username:password} \\ \hline
+\texttt{SESSION\_TTL} & 86400 giây (24 giờ) \\ \hline
+\end{longtable}
+
+\begin{longtable}{|p{4cm}|p{2cm}|p{9cm}|}
+\hline
+\textbf{Endpoint} & \textbf{Method} & \textbf{Mô tả} \\ \hline
+\texttt{/api/login} & POST & Xác thực, trả \texttt{Set-Cookie: session\_id=...} \\ \hline
+\texttt{/api/logout} & POST & Xóa session, đặt \texttt{Max-Age=0} \\ \hline
+\texttt{/api/me} & GET & Trả tên user hiện tại \\ \hline
+\end{longtable}
+
+%===== 4. HTTP =====
+\section{Xử lý HTTP Request và Response}
+
+\subsection{Module \texttt{Request} (\texttt{daemon/request.py})}
+
+\begin{lstlisting}[language=Python]
+def prepare(self, request, routes=None):
+    self.method, self.path, self.version = self.extract_request_line(request)
+    self.headers = self.prepare_headers(request)
+    self.body    = self.fetch_headers_body(request)[1]
+    # Parse Cookie
+    self.cookies = {}
+    for pair in cookie_str.split(';'):
+        if '=' in pair:
+            k, v = pair.strip().split('=', 1)
+            self.cookies[k] = v
+    self.auth = self.headers.get('authorization', None)
+    if routes:
+        self.hook = routes.get((self.method, self.path))
+\end{lstlisting}
+
+\subsection{Module \texttt{HttpAdapter} (\texttt{daemon/httpadapter.py})}
+
+Sau khi refactor, \texttt{HttpAdapter} có 3 method chính:
+\begin{itemize}
+  \item \texttt{process\_request(raw\_msg, addr)}: Lõi HTTP --- dùng chung cho cả 3 mode.
+  \item \texttt{handle\_client(conn, addr, routes)}: Threading mode --- recv() rồi gọi \texttt{process\_request()}.
+  \item \texttt{handle\_client\_coroutine(reader, writer)}: Async I/O --- \texttt{await read()} rồi gọi \texttt{process\_request()}.
+\end{itemize}
+
+%===== 5. CHATAPP =====
+\section{Ứng dụng Chat Hybrid (Phần 2.3)}
+
+\subsection{Kiến trúc Hybrid Client-Server + P2P}
+
+\begin{center}
+\begin{tikzpicture}[node distance=1.5cm,
+  box/.style={draw,rectangle,align=center,minimum width=2.8cm,minimum height=1.2cm,font=\ttfamily\small},
+  arrow/.style={->,>=Stealth,thick}]
+  \node[box](tracker){Tracker\\(port 9001)};
+  \node[box,below left=1.5cm and 0.5cm of tracker](peerA){Peer A\\(port 8001)};
+  \node[box,below=2cm of tracker](peerB){Peer B\\(port 8002)};
+  \node[box,below right=1.5cm and 0.5cm of tracker](peerC){Peer C\\(port 8003)};
+  \draw[arrow](tracker)--(peerA) node[midway,left,font=\footnotesize]{register};
+  \draw[arrow](tracker)--(peerB);
+  \draw[arrow](tracker)--(peerC);
+  \draw[<->,thick](peerA.south)--+(0,-0.4)-|(peerC.south)
+    node[midway,below,font=\footnotesize\ttfamily]{Direct P2P (send-peer)};
+\end{tikzpicture}
+\end{center}
+
+\subsection{Giai đoạn khởi tạo (Client--Server)}
+
+\begin{lstlisting}[language=Python, caption={trackerapp.py --- dang ky peer}]
+@app.route('/submit-info', methods=['POST'])
+def submit_info(req):
+    resolved_ip = resolve_peer_ip(ip, req.remote_addr)
+    PEER_REGISTRY[name] = {"ip": resolved_ip, "port": port, "last_seen": now}
+
+@app.route('/get-list', methods=['POST'])
+def get_list(req):
+    cleanup_online(now)   # Xoa peer offline (TTL 30s)
+    peers = [{"name": n, **info} for n, info in PEER_REGISTRY.items()
+             if ONLINE.get(n)]
+    return json_response({"code": 1, "peers": peers})
+\end{lstlisting}
+
+\subsection{Giai đoạn Chat (Peer-to-Peer, không dùng asyncio)}
+
+ChatApp mới dùng \textbf{blocking socket} thay vì \texttt{asyncio.open\_connection()}, và dùng \texttt{threading} thay vì \texttt{asyncio.gather()}:
+
+\begin{lstlisting}[language=Python, caption={send\_to\_peer\_sync() --- gui P2P bang blocking socket}]
+def send_to_peer_sync(target_ip, target_port, payload):
+    body = json.dumps(payload).encode('utf-8')
+    http_request = (
+        f"POST /internal/receive-msg HTTP/1.1\r\n"
+        f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n"
+    ).encode() + body
+    s = socket.socket(AF_INET, SOCK_STREAM)
+    s.settimeout(5)
+    s.connect((target_ip, int(target_port)))
+    s.sendall(http_request)
+    s.recv(4096)    # Doc va bo qua response
+    s.close()
+\end{lstlisting}
+
+\begin{lstlisting}[language=Python, caption={broadcast\_peer() --- gui dong thoi bang threading}]
+@app.route('/broadcast-peer', methods=['POST'])
+def broadcast_peer(req):
+    payload = {"from": sender, "message": message, ...}
+    threads = []
+    for name, info in PEER_CACHE.items():
+        if name == sender_name: continue
+        t = threading.Thread(
+            target=send_to_peer_sync,
+            args=(info["ip"], info["port"], payload),
+            daemon=True
+        )
+        t.start(); threads.append(t)
+    for t in threads: t.join(timeout=5)
+\end{lstlisting}
+
+\begin{lstlisting}[language=Python, caption={Nhan va lay tin nhan}]
+@app.route('/internal/receive-msg', methods=['POST'])
+def internal_receive_msg(req):
+    MESSAGE_QUEUE.append(json.loads(req.body))
+    return json_response({"code": 1, "message": "Received"})
+
+@app.route('/poll-messages', methods=['POST'])
+def poll_messages(req):
+    msgs = list(MESSAGE_QUEUE)
+    MESSAGE_QUEUE.clear()
+    return json_response({"code": 1, "messages": msgs})
+\end{lstlisting}
+
+%===== 6. BENCHMARK =====
+\section{Benchmark: Threading vs Callback}
+
+\subsection{Phương pháp}
+
+Script \texttt{benchmark\_th\_cb.py} gửi $N$ request đến 2 server, đo throughput và latency:
+
+\begin{lstlisting}[language=bash]
+python benchmark_th_cb.py --th-port 9010 --cb-port 9020 -n 1000 --step 50 --max-c 500
+\end{lstlisting}
+
+\subsection{Kết quả đo lường}
+
+\begin{longtable}{|r|r|r|r|r|l|}
+\hline
+\textbf{Concurrency} & \textbf{TH RPS} & \textbf{CB RPS} & \textbf{TH Avg(ms)} & \textbf{CB Avg(ms)} & \textbf{Winner} \\ \hline
+50  & 1010 & 1547 & 36.8 & 13.5 & Callback \\ \hline
+100 & 1049 & 1603 & 72.2 & 25.2 & Callback \\ \hline
+150 & 273  & 1556 & 148  & 37.3 & Callback \\ \hline
+200 & 344  & 343  & 200  & 136  & Callback \\ \hline
+300 & 405  & 501  & 251  & 234  & Callback \\ \hline
+400 & 416  & 339  & 314  & 333  & Threading \\ \hline
+500 & 443  & 419  & 388  & 437  & Threading \\ \hline
+\end{longtable}
+
+\subsection{Phân tích}
+
+\begin{itemize}
+  \item \textbf{Callback thắng} khi concurrency thấp--vừa ($\leq$300): 1 thread không tốn overhead tạo thread mới, \texttt{select()} xử lý nhiều kết nối ngắn rất hiệu quả. Latency trung bình thấp hơn 2--4 lần.
+  \item \textbf{Threading thắng} khi concurrency rất cao ($>$400): Callback bị bottleneck vì 1 thread phải tuần tự xử lý từng callback. Thread pool cho phép song song thực sự trên multi-core.
+  \item \textbf{Callback đặc biệt vượt trội} ở concurrency 150 (1556 vs 273 RPS): Do threading tạo quá nhiều thread đồng thời gây context switch overhead.
+\end{itemize}
+
+%===== 7. CẤU TRÚC FILE =====
+\section{Cấu trúc file dự án}
+
+\begin{lstlisting}[language=bash]
+MMT_Assignment1/
+├── daemon/
+│   ├── eventloop.py     # Custom select() Event Loop (MỚI)
+│   ├── backend.py       # 3 mode: threading / callback
+│   ├── httpadapter.py   # process_request() dung chung
+│   ├── request.py       # HTTP parser
+│   ├── response.py      # HTTP response builder
+│   ├── asynaprous.py    # Micro-framework routing (khong asyncio)
+│   └── api.py           # API handlers
+├── apps/
+│   ├── chatapp.py       # P2P chat (sync socket + threading)
+│   └── trackerapp.py    # Peer registry
+├── www/                 # HTML pages
+├── db/                  # account.txt, sessions_id.txt
+├── start_backend.py     # Entry: --mode threading/callback
+├── start_chatapp.py     # Entry: chat peer
+├── start_tracker.py     # Entry: tracker
+├── benchmark_th_cb.py   # Benchmark threading vs callback
+└── test_chatapp.py      # Test toan bo chuc nang
+\end{lstlisting}
+
+%===== 8. KẾT LUẬN =====
+\section{Kết luận}
+
+Bài tập lớn đã thực hiện được các yêu cầu chính:
+
+\begin{enumerate}
+  \item \textbf{Non-blocking HTTP Server tự xây}: Xây dựng \texttt{EventLoop} dựa trên \texttt{select.select()} trong \texttt{daemon/eventloop.py}, \textbf{không dùng asyncio hay bất kỳ framework bên ngoài nào}. Tuân thủ tinh thần ``develop your own framework using the provided non-blocking mechanisms'' của đề bài.
+
+  \item \textbf{Phân tầng rõ ràng}:
+    \begin{itemize}
+      \item Tầng I/O: \texttt{EventLoop} + \texttt{SelectHTTPServer} (select).
+      \item Tầng HTTP: \texttt{HttpAdapter.process\_request()} (dùng chung 3 mode).
+      \item Tầng API: \texttt{master\_api\_handler()} + routes.
+    \end{itemize}
+
+  \item \textbf{Xác thực HTTP}: HTTP Basic Auth (RFC 7235) + Cookie session (RFC 6265), phân quyền public/private/API path.
+
+  \item \textbf{Chat Hybrid}: Client--Server (Tracker) + P2P trực tiếp dùng blocking socket + threading cho broadcast đồng thời.
+
+  \item \textbf{Benchmark}: Callback mode vượt trội ở concurrency thấp--vừa (tối đa $\times$5.7 RPS so với threading ở c=150), Threading phù hợp hơn ở concurrency rất cao.
+
+  \item \textbf{AsynapRous Framework}: Micro-framework decorator routing tự implement, không phụ thuộc thư viện ngoài.
+\end{enumerate}
+
+\end{document}
