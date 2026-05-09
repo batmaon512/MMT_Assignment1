@@ -23,6 +23,7 @@ import socket
 import threading
 import time
 import traceback
+import heapq
 from collections import deque
 
 
@@ -116,6 +117,20 @@ class TaskQueue:
 #  EventLoop — Trái tim của hệ thống
 # =============================================================================
 
+class TimerHandle:
+    """Đối tượng đại diện cho một tác vụ hẹn giờ."""
+    def __init__(self, execute_at, callback, args):
+        self.execute_at = execute_at
+        self.callback = callback
+        self.args = args
+        self.cancelled = False
+
+    def __lt__(self, other):
+        return self.execute_at < other.execute_at
+
+    def cancel(self):
+        self.cancelled = True
+
 class EventLoop:
     """
     Vòng lặp sự kiện (Event Loop) tự xây dựng bằng select().
@@ -153,8 +168,17 @@ class EventLoop:
         """
         self._registry       = CallbackRegistry()
         self._task_queue     = TaskQueue()
+        self._timers         = [] # Hàng đợi Min-Heap cho hẹn giờ
         self._running        = False
         self._select_timeout = select_timeout
+
+    def call_later(self, delay, callback, *args):
+        """Lên lịch callback chạy sau `delay` giây."""
+        execute_at = time.time() + delay
+        handle = TimerHandle(execute_at, callback, args)
+        with self._lock:
+            heapq.heappush(self._timers, handle)
+        return handle
 
     # ------------------------------------------------------------------
     #  Public API
@@ -188,24 +212,35 @@ class EventLoop:
     def _run_once(self):
         """
         Thực hiện 1 iteration của event loop.
-
-        Bước 1: Drain TaskQueue.
-        Bước 2: select() — hỏi OS socket nào sẵn sàng.
-        Bước 3: Gọi callback tương ứng.
         """
-        # Bước 1
+        # Bước 1: Drain TaskQueue
         self._task_queue.drain()
+
+        # Bước 1.5: Xử lý các Timer đã đến hạn
+        now = time.time()
+        with self._lock:
+            while self._timers and self._timers[0].execute_at <= now:
+                handle = heapq.heappop(self._timers)
+                if not handle.cancelled:
+                    self._task_queue.enqueue(handle.callback, *handle.args)
+        
+        # Bước 2: Tính toán timeout thông minh cho select()
+        timeout = self._select_timeout
+        with self._lock:
+            if self._timers:
+                time_to_next = self._timers[0].execute_at - time.time()
+                timeout = max(0.0, min(timeout, time_to_next))
 
         r_list = self._registry.get_read_sockets()
         w_list = self._registry.get_write_sockets()
 
         if not r_list and not w_list:
-            time.sleep(self._select_timeout)
+            time.sleep(timeout)
             return
 
         try:
             readable, writable, _ = select.select(
-                r_list, w_list, [], self._select_timeout
+                r_list, w_list, [], timeout
             )
         except (ValueError, OSError):
             self._cleanup_dead_sockets(r_list, w_list)
@@ -276,12 +311,20 @@ class ConnectionBuffer:
         self.addr   = addr
         self.buffer = b""
         self.done   = False   # True khi đã nhận đủ 1 HTTP request
+        self.last_active_time = time.time()
 
     def feed(self, data: bytes):
         """Thêm dữ liệu vào buffer. Đánh dấu done khi gặp \\r\\n\\r\\n."""
+        self.last_active_time = time.time()
         self.buffer += data
         if b"\r\n\r\n" in self.buffer:
             self.done = True
+            
+    def reset(self):
+        """Reset buffer để tái sử dụng socket (Keep-Alive)."""
+        self.buffer = b""
+        self.done = False
+        self.last_active_time = time.time()
 
     def get_request(self) -> str:
         """Trả về toàn bộ request dưới dạng string."""
@@ -324,6 +367,9 @@ class SelectHTTPServer:
         self.loop            = EventLoop.get_instance()
         self._buffers        = {}   # {conn: ConnectionBuffer}
         self._server_sock    = None
+        
+        # Bắt đầu vòng tuần tra dọn rác (mỗi 10 giây)
+        self.loop.call_later(10.0, self._cleanup_idle_connections)
 
     def start(self):
         """Tạo server socket và đăng ký vào event loop."""
@@ -385,9 +431,6 @@ class SelectHTTPServer:
     def _handle_request(self, conn, buf):
         """
         Gọi request_handler để xử lý HTTP request và gửi response.
-
-        request_handler nhận (raw_request: str, addr: tuple) và trả bytes.
-        Xem HttpAdapter.make_callback_handler() để tạo handler đầy đủ.
         """
         try:
             raw_request = buf.get_request()
@@ -397,11 +440,28 @@ class SelectHTTPServer:
                 response = response.encode("utf-8")
 
             conn.sendall(response)
+            
+            # --- KIỂM TRA KEEP-ALIVE ---
+            if "connection: keep-alive" in raw_request.lower():
+                buf.reset() # Tái sử dụng ống nước, không đóng!
+            else:
+                self._close_conn(conn) # Đóng kết nối
 
         except Exception:
             traceback.print_exc()
-        finally:
             self._close_conn(conn)
+
+    def _cleanup_idle_connections(self):
+        """Cai ngục đi tuần tiêu diệt kết nối nhàn rỗi (> 60s)"""
+        now = time.time()
+        for conn, buf in list(self._buffers.items()):
+            if now - buf.last_active_time > 60.0:
+                print(f"[Terminator] Timeout closing idle connection: {buf.addr}")
+                self._close_conn(conn)
+                
+        # Tiếp tục hẹn giờ cho lần đi tuần sau
+        if self.loop._running:
+            self.loop.call_later(10.0, self._cleanup_idle_connections)
 
     def _close_conn(self, conn):
         """Đóng kết nối và dọn dẹp khỏi registry."""

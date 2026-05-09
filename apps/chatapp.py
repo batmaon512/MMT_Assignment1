@@ -62,7 +62,7 @@ def make_tracker_request(path, data, req=None):
 
         # Gửi qua blocking TCP socket
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(5)
+        s.settimeout(0.5)
         s.connect((tracker_ip, tracker_port))
         s.sendall(http_request)
 
@@ -87,17 +87,11 @@ def make_tracker_request(path, data, req=None):
         return {"code": 0, "error": str(e)}
 
 
-def send_to_peer_sync(target_ip, target_port, payload):
+def send_to_peer_async(target_ip, target_port, payload):
     """
-    Gửi tin nhắn trực tiếp đến peer bằng blocking socket (không dùng asyncio).
-
-    Kết nối TCP trực tiếp → không qua tracker (P2P thuần túy).
-
-    :param target_ip (str): IP của peer nhận.
-    :param target_port (int/str): Port của peer nhận.
-    :param payload (dict): Dữ liệu tin nhắn.
-    :return: bool — True nếu thành công.
+    Gửi tin nhắn P2P không dùng threading, sử dụng kiến trúc EventLoop (Fire-and-Forget).
     """
+    from daemon.eventloop import EventLoop
     try:
         body = json.dumps(payload).encode('utf-8')
         http_request = (
@@ -109,15 +103,54 @@ def send_to_peer_sync(target_ip, target_port, payload):
         ).encode('utf-8') + body
 
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(5)
-        s.connect((target_ip, int(target_port)))
-        s.sendall(http_request)
-        s.recv(4096)   # Đọc và bỏ qua response
-        s.close()
-        return True
+        s.setblocking(False)
+        s.connect_ex((target_ip, int(target_port)))
+        
+        loop = EventLoop.get_instance()
+        
+        class AsyncSender:
+            def __init__(self, sock, data):
+                self.sock = sock
+                self.data = data
+                self.sent = 0
+                
+            def do_write(self, sock):
+                try:
+                    sent = sock.send(self.data[self.sent:])
+                    self.sent += sent
+                    if self.sent >= len(self.data):
+                        # Đã gửi xong, hủy đăng ký ghi, đăng ký đọc để chờ response
+                        loop.unregister(sock)
+                        loop.register_read(sock, self.do_read)
+                except BlockingIOError:
+                    pass
+                except Exception as e:
+                    self.cleanup()
 
+            def do_read(self, sock):
+                try:
+                    sock.recv(4096) # Đọc bỏ response
+                    self.cleanup()
+                except BlockingIOError:
+                    pass
+                except Exception:
+                    self.cleanup()
+                    
+            def cleanup(self):
+                try:
+                    loop.unregister(self.sock)
+                    self.sock.close()
+                except Exception:
+                    pass
+
+        sender = AsyncSender(s, http_request)
+        loop.register_write(s, sender.do_write)
+        
+        # Terminator timeout: Dọn dẹp nếu peer kia không phản hồi trong 5 giây
+        loop.call_later(5.0, sender.cleanup)
+        return True
     except Exception as e:
-        print(f"[ChatApp] Error sending to peer {target_ip}:{target_port}: {e}")
+        print(f"[ChatApp] Error creating async socket to {target_ip}:{target_port}: {e}")
         return False
 
 
@@ -128,6 +161,8 @@ def send_to_peer_sync(target_ip, target_port, payload):
 @app.route('/api/login', methods=['POST'])
 def app_login(req):
     if getattr(req, 'user', None):
+        global MESSAGE_QUEUE
+        MESSAGE_QUEUE.clear() # Dọn dẹp rác của tài khoản cũ
         body = '{"success": true, "message": "Login successful"}'
         cookie_header = ""
         if hasattr(req, 'new_cookie') and req.new_cookie:
@@ -151,6 +186,8 @@ def app_login(req):
 
 @app.route('/api/logout', methods=['POST'])
 def app_logout(req):
+    global MESSAGE_QUEUE
+    MESSAGE_QUEUE.clear() # Dọn dẹp hàng đợi khi thoát
     session_id = None
     if req.cookies:
         session_id = req.cookies.get('session_id')
@@ -196,6 +233,7 @@ def get_list(req):
             name = peer.get("name")
             if name:
                 PEER_CACHE[name] = {"ip": peer.get("ip"), "port": peer.get("port")}
+        
     return json_response(res)
 
 
@@ -213,9 +251,11 @@ def peers(req):
 @app.route('/online', methods=['POST'])
 def online(req):
     """Heartbeat: báo cho tracker biết peer này vẫn online."""
+    global PEER_CACHE
     data = json.loads(req.body) if req.body else {}
     data["name"] = data.get("name") or getattr(req, "user", "")
     res = make_tracker_request("/online", data, req)
+    # Không dùng fallback nữa, trả thẳng kết quả thực tế (code 0) từ Tracker
     return json_response(res)
 
 
@@ -300,11 +340,11 @@ def send_peer(req):
         "time": time.time() * 1000
     }
 
-    success = send_to_peer_sync(target_peer["ip"], target_peer["port"], payload)
+    success = send_to_peer_async(target_peer["ip"], target_peer["port"], payload)
     if success:
-        return json_response({"code": 1, "message": "Message sent"})
+        return json_response({"code": 1, "message": "Message enqueued in EventLoop"})
     else:
-        return json_response({"code": 0, "message": "Failed to send message"})
+        return json_response({"code": 0, "message": "Failed to enqueue message"})
 
 
 @app.route('/broadcast-peer', methods=['POST'])
@@ -340,24 +380,13 @@ def broadcast_peer(req):
         "time": time.time() * 1000
     }
 
-    # Gửi đồng thời đến tất cả peers bằng threading
-    threads = []
+    # Gửi đồng thời đến tất cả peers bằng EventLoop (Fire-and-Forget)
     for name, info in PEER_CACHE.items():
         if name == sender_name:
             continue
-        t = threading.Thread(
-            target=send_to_peer_sync,
-            args=(info["ip"], info["port"], payload),
-            daemon=True
-        )
-        t.start()
-        threads.append(t)
+        send_to_peer_async(info["ip"], info["port"], payload)
 
-    # Chờ tất cả thread hoàn thành (tối đa 5s)
-    for t in threads:
-        t.join(timeout=5)
-
-    return json_response({"code": 1, "message": "Broadcast complete"})
+    return json_response({"code": 1, "message": "Broadcast enqueued in EventLoop"})
 
 
 @app.route('/internal/receive-msg', methods=['POST'])

@@ -78,19 +78,19 @@ def forward_request(host, port, request):
         ).encode('utf-8')
 
 
+# Biến toàn cục lưu trữ index xoay vòng cho từng hostname
+rr_indices = {}
+
 def resolve_routing_policy(hostname, routes):
     """
     Handles an routing policy to return the matching proxy_pass.
     It determines the target backend to forward the request to.
-
-    :params host (str): IP address of the request target server.
-    :params port (int): port number of the request target server.
-    :params routes (dict): dictionary mapping hostnames and location.
     """
+    global rr_indices
 
-    print("[Proxy] Resolving hostname:", hostname)
+    # print("[Proxy] Resolving hostname:", hostname)
     proxy_map, policy = routes.get(hostname, ('127.0.0.1:9000', 'round-robin'))
-    print("[Proxy] proxy_map:", proxy_map, "policy:", policy)
+    # print("[Proxy] proxy_map:", proxy_map, "policy:", policy)
 
     proxy_host = '127.0.0.1'
     proxy_port = '9000'
@@ -100,12 +100,19 @@ def resolve_routing_policy(hostname, routes):
         elif len(proxy_map) == 1:
             proxy_host, proxy_port = proxy_map[0].split(":", 1)
         else:
-            # Round-robin: dung index theo so ket noi
-            import random
-            chosen = random.choice(proxy_map)
-            proxy_host, proxy_port = chosen.split(":", 1)
+            if policy == 'round-robin':
+                # Triển khai True Round-Robin
+                idx = rr_indices.get(hostname, 0)
+                chosen = proxy_map[idx]
+                rr_indices[hostname] = (idx + 1) % len(proxy_map)
+                proxy_host, proxy_port = chosen.split(":", 1)
+            else:
+                # Fallback ngẫu nhiên nếu không phải round-robin
+                import random
+                chosen = random.choice(proxy_map)
+                proxy_host, proxy_port = chosen.split(":", 1)
     else:
-        print("[Proxy] Singular route for hostname {}".format(hostname))
+        # print("[Proxy] Singular route for hostname {}".format(hostname))
         proxy_host, proxy_port = proxy_map.split(":", 1)
 
     return proxy_host, proxy_port
