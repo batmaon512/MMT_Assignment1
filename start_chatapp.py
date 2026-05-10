@@ -4,12 +4,21 @@ from apps.chatapp import create_chatapp
 PORT = 8001
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(prog='ChatApp', description='', epilog='ChatApp daemon')
-    parser.add_argument('--server-ip', default='0.0.0.0')
-    parser.add_argument('--server-port', type=int, default=PORT)
-    parser.add_argument('--tracker-ip', default='127.0.0.1')
-    parser.add_argument('--tracker-port', type=int, default=9000)
+    parser = argparse.ArgumentParser(
+        prog='ChatApp',
+        description='Start the ZeroMQ chat backend',
+        epilog='ZeroMQ chat server daemon',
+    )
+    parser.add_argument('--bind-ip', default='0.0.0.0', help='IP address for the server PULL socket to bind')
+    parser.add_argument('--bind-port', type=int, default=PORT, help='Port for the server PULL socket to bind')
+    parser.add_argument('--server-endpoint', help='Optional tcp://host:port override for the server bind endpoint')
     
     args = parser.parse_args()
 
-    create_chatapp(args.server_ip, args.server_port, args.tracker_ip, args.tracker_port)
+    if args.server_endpoint:
+        if not args.server_endpoint.startswith('tcp://'):
+            raise SystemExit('--server-endpoint must start with tcp://')
+        bind_ip, bind_port = args.server_endpoint.removeprefix('tcp://').rsplit(':', 1)
+        create_chatapp(bind_ip, int(bind_port))
+    else:
+        create_chatapp(args.bind_ip, args.bind_port)

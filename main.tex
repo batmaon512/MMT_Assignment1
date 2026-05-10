@@ -1,0 +1,255 @@
+\documentclass[a4paper,12pt]{article}
+
+%------------------------- PACKAGES -------------------------%
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+\usepackage{inconsolata} 
+
+\usepackage{amsmath,amsfonts,amssymb,mathtools}
+\usepackage{geometry}
+\geometry{left=2cm, right=2cm, top=2.5cm, bottom=2.5cm}
+\usepackage{scrextend}
+\changefontsizes{13pt}
+\usepackage{setspace}
+\usepackage{indentfirst}
+
+\usepackage{graphicx}
+\usepackage{tikz}
+\usetikzlibrary{calc}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{booktabs}
+\usepackage{float}
+\usepackage{tcolorbox}
+
+\usepackage{listings}
+\usepackage{xcolor}
+\definecolor{codebg}{rgb}{0.95,0.95,0.92}
+\definecolor{codecomment}{rgb}{0.0,0.5,0.0}
+\definecolor{codekeyword}{rgb}{0.0,0.0,0.8}
+\definecolor{hcmutblue}{RGB}{3, 37, 126} 
+
+\lstdefinestyle{mystyle}{
+  backgroundcolor=\color{codebg},
+  commentstyle=\color{codecomment}\itshape,
+  keywordstyle=\color{codekeyword}\bfseries,
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  numbers=left,
+  showstringspaces=false
+}
+\lstset{style=mystyle}
+
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage[unicode,hidelinks]{hyperref}
+
+%------------------------- SETTINGS -------------------------%
+\setlength{\parindent}{1em} 
+\setlength{\parskip}{3pt}    
+
+\pagestyle{fancy}
+\fancyhead{}
+\fancyhead[L]{
+    \footnotesize \ttfamily Ho Chi Minh City University of Technology \\
+    Faculty of Computer Science and Engineering
+}
+\fancyfoot{}
+\fancyfoot[L]{\footnotesize \ttfamily Computer Networks (HPMR) - Lab Report}
+\fancyfoot[R]{\footnotesize \ttfamily Page {\thepage}/\pageref{LastPage}}
+
+%------------------------- MAIN DOCUMENT -------------------------%
+\begin{document}
+
+\begin{titlepage}
+\begin{tikzpicture}[remember picture,overlay,inner sep=0,outer sep=0]
+     \draw[blue!70!black,line width=4pt] ([xshift=-1.5cm,yshift=-2cm]current page.north east) -- ([xshift=1.5cm,yshift=-2cm]current page.north west) -- ([xshift=1.5cm,yshift=2cm]current page.south west) -- ([xshift=-1.5cm,yshift=2cm]current page.south east) -- cycle;
+\end{tikzpicture}
+
+\begin{center}
+    \vspace*{10pt}
+    \large \textbf{VIETNAM NATIONAL UNIVERSITY - HO CHI MINH CITY} \\
+    \vspace{5pt}
+    \Large \textbf{HO CHI MINH CITY UNIVERSITY OF TECHNOLOGY}
+    
+    \vspace{25pt}
+    \includegraphics[scale=0.3]{Picture/BKU.png}
+    
+    \vspace{25pt}
+    \textcolor{hcmutblue}{\fontsize{24pt}{24pt}\selectfont \textbf{COMPUTER NETWORKS (HPMR)}} \\
+    \vspace{15pt}
+    \fontsize{18pt}{18pt}\selectfont \textbf{Extension: Design ZeroMQ} \\
+\end{center}
+
+\vspace{30pt}
+
+\begin{table}[H]
+    \centering
+    \large
+    \renewcommand{\arraystretch}{1.2}
+    \begin{tabular}{>{\bfseries}l l}
+        Instructor:  & NGUYEN PHUONG DUY \\
+        \midrule
+        Students:    & Mai Xuan Nhut - 2312549 \\
+                     & Nguyen Viet Hoang - 2311066 \\
+                     & Nguyen Chi Thanh - 2313078 \\
+                     & Le Duc Tai - 2312995 \\
+        Class ID:    & CO3094 (A01) \\
+    \end{tabular}
+\end{table}
+
+\vfill
+\begin{center}
+    \large \textbf{HO CHI MINH CITY, 2026}
+\end{center}
+\end{titlepage}
+
+\newpage
+\tableofcontents
+\newpage
+
+\setstretch{1.25}
+\titleformat{\section}{\Large\bfseries\color{hcmutblue}}{\thesection}{1em}{}
+
+\begin{abstract}
+This report details the architectural transition of a chat backend from a synchronous HTTP-based model to a high-performance, brokerless asynchronous system using ZeroMQ. By implementing a PUSH/PULL messaging pattern, we achieved significant reductions in latency and protocol overhead. The design emphasizes the "Smart Endpoint, Dumb Network" philosophy, leveraging lock-free algorithms and the Actor model to ensure linear scalability on multi-core environments while supporting both TCP and intra-process communication.
+\end{abstract}
+
+\section{Problem Statement}
+The original implementation relied on HTTP request-response semantics, which proved inefficient for real-time chat:
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{High Overhead}: Every message requires HTTP header parsing and multiple network traversals.
+  \item \textbf{Blocking I/O}: Traditional HTTP servers often struggle with massive concurrency due to blocking calls in the critical path.
+  \item \textbf{Centralized Bottleneck}: The use of a central broker or web controller induces a penalty in throughput and latency.
+\end{itemize}
+
+\section{Implemented Architecture}
+The implementation is intentionally small and follows one message-oriented path end to end. The application itself owns the routing logic, and ZeroMQ provides the transport and socket primitives.
+
+\subsection{Launcher and Entry Point}
+The launcher in \texttt{start\_chatapp.py} exposes ZeroMQ-specific flags instead of HTTP-specific ones.
+\begin{itemize}[leftmargin=1.4em]
+  \item \texttt{--bind-ip} and \texttt{--bind-port} define where the server PULL socket listens.
+  \item \texttt{--server-endpoint} allows the server to be started directly with a \texttt{tcp://} address.
+  \item The launcher simply forwards the selected bind address to \texttt{create\_chatapp()}.
+\end{itemize}
+
+This is the first practical change from the HTTP version: the server is launched as a ZeroMQ message endpoint, not as a web application.
+
+\subsection{Server-Side Message Handling}
+The backend in \texttt{apps/chatapp.py} is responsible for three concrete tasks:
+\begin{enumerate}[leftmargin=1.4em]
+  \item bind one PULL socket for incoming messages,
+  \item maintain an in-memory registry from user name to receiving endpoint,
+  \item forward messages to the correct destination using PUSH sockets.
+\end{enumerate}
+
+The implementation idea is simple:
+\begin{itemize}[leftmargin=1.4em]
+  \item When the server receives a \texttt{register} message, it stores the client's address in the registry.
+  \item When it receives a \texttt{send} message, it looks up the target user and forwards the payload only to that user.
+  \item When it receives a \texttt{broadcast} message, it iterates over the registry and forwards the same payload to all registered users.
+\end{itemize}
+
+This design keeps the message path short and avoids translating chat traffic into HTTP requests.
+
+\subsection{Client-Side Message Handling}
+The client in \texttt{apps/zmq\_chat\_client.py} is split into two parts:
+\begin{itemize}[leftmargin=1.4em]
+  \item a background receiver thread that binds a local PULL socket and prints incoming chat messages,
+  \item a sender loop that connects a PUSH socket to the server and sends register/direct/broadcast commands.
+\end{itemize}
+
+The idea behind this code is to separate inbound and outbound traffic cleanly. The receiver thread handles incoming payloads independently, while the foreground loop remains interactive for user input.
+
+\subsection{Message Flow}
+The runtime flow is implemented directly in the socket logic:
+\begin{enumerate}[leftmargin=1.4em]
+  \item The client binds its local receive socket.
+  \item The client sends a \texttt{register} message to the server.
+  \item The server stores the client's endpoint.
+  \item For direct messaging, the sender sends \texttt{send} and the server forwards the payload to one destination.
+  \item For broadcast, the sender sends \texttt{broadcast} and the server forwards the payload to all destinations.
+\end{enumerate}
+
+\subsection{Automated Smoke Test}
+The file \texttt{benchmarks/zmq\_chat\_smoke.py} shows how the implementation is verified in code.
+\begin{itemize}[leftmargin=1.4em]
+  \item It starts the server as a subprocess.
+  \item It creates two clients with separate receive ports.
+  \item It sends registration frames, a direct message, and a broadcast message.
+  \item It asserts that the correct recipient sockets actually receive the expected payloads.
+\end{itemize}
+
+This test is important because it proves the solution works as a live ZeroMQ pipeline rather than just as a design sketch.
+
+\section{Interface Design Criteria}
+The submission is also evaluated by four practical interface criteria. The implementation and report address each one directly.
+
+\subsection{Interface Clarity}
+The message interface is intentionally small and easy to read. Every message uses a simple JSON schema with a \texttt{type} field and a small set of required attributes:
+\begin{itemize}[leftmargin=1.4em]
+  \item \texttt{register}: declares the client name and receive port,
+  \item \texttt{send}: carries sender, recipient, and message content,
+  \item \texttt{broadcast}: carries sender and message content.
+\end{itemize}
+
+This structure makes the connection flow easy to document and easy to test for all connection types.
+
+\subsection{Connection Efficiency}
+The design is efficient because it avoids HTTP parsing, request routing, and synchronous round trips. Instead:
+\begin{itemize}[leftmargin=1.4em]
+  \item clients push messages asynchronously to the server,
+  \item the server keeps an in-memory registry for direct lookup,
+  \item delivery happens through ZeroMQ sockets with minimal protocol overhead,
+  \item the same socket pattern works for both direct delivery and broadcast delivery.
+\end{itemize}
+
+This keeps latency low and resource usage modest, which is the main benefit of the ZeroMQ approach.
+
+\subsection{Error Handling}
+The implementation includes practical checks for malformed or incomplete data:
+\begin{itemize}[leftmargin=1.4em]
+  \item the server rejects missing names and invalid receive ports during registration,
+  \item malformed send messages are detected before forwarding,
+  \item unknown recipients are reported by the server instead of crashing the process,
+  \item the client validates the command syntax for direct and broadcast messages.
+\end{itemize}
+
+These checks keep the connection layer stable even when bad payloads are received.
+
+\subsection{Scalability Design}
+The architecture is scalable because each new client only adds one registry entry and one receive socket. There is no need to rewrite the protocol when load increases.
+\begin{itemize}[leftmargin=1.4em]
+  \item The server can handle more clients by extending the in-memory registry.
+  \item Direct messaging remains efficient because the server resolves the target in constant time.
+  \item Broadcast delivery scales by iterating over the registered endpoints without adding a separate broker process.
+  \item The same design can later be extended to more nodes, additional worker processes, or alternative transports such as \texttt{inproc}.
+\end{itemize}
+
+\section{Validation and Benchmarking}
+Validation was performed using an automated smoke test covering registration, direct delivery, and broadcast functionality.
+\begin{itemize}[leftmargin=1.4em]
+  \item Confirmed successful server startup with a ZeroMQ PULL endpoint.
+  \item Verified that direct messages reach only the intended recipient without HTTP overhead.
+  \item Demonstrated that broadcast messages are delivered asynchronously to all registered nodes.
+\end{itemize}
+
+\section{AI Attribution}
+In accordance with university regulations, we disclose that AI (Gemini) was used for:
+\begin{itemize}
+    \item Assisting with LaTeX formatting and technical English terminology.
+    \item Summarizing architectural concepts from external technical documentation.
+    \item Providing a template for the report structure and command-line usage examples.
+    \item \textit{Note: All design decisions and final code validation were conducted by the student group.}
+\end{itemize}
+
+\section{Conclusion}
+This project successfully demonstrates the migration to an asynchronous brokerless architecture. By focusing on the critical path and utilizing lock-free concurrency, the system provides a robust foundation for low-latency, extreme-speed messaging that far exceeds the capabilities of standard synchronous HTTP models.
+
+\end{document}
