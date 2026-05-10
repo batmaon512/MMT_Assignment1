@@ -48,35 +48,35 @@ def _cleanup_online(now):
 
 def app_echo(req):
     """
-    API Echo: Nhận chữ gì thì trả về đúng chữ đó.
-    Sử dụng Response object để đóng gói Header chuyên nghiệp.
+    API Echo: receives any text and returns it back.
+    Uses Response object to wrap headers professionally.
     """
-    message = "Khong co du lieu"
+    message = "No data"
     if req.body:
         try:
             data = json.loads(req.body)
             message = data.get('text', '')
         except:
             message = req.body
-            
-    response_body = f"ECHO: Ban vua noi la '{message}'"
-    
-    # Sử dụng ông Thủ kho Response để tự động tính Content-Length và Date
+
+    response_body = f"ECHO: You said '{message}'"
+
+    # Use Response helper to automatically calculate Content-Length and Date
     resp = Response()
     resp._content = response_body.encode('utf-8')
     resp.headers['Content-Type'] = 'text/plain'
-    
+
     header_str = resp.build_response_header(req)
     return header_str + resp._content
 
 def app_hello(req):
-    """API Chào hỏi"""
-    response_body = "HELLO: Chao mung ban den voi may chu AsynapRous!"
-    
+    """API greeting endpoint."""
+    response_body = "HELLO: Welcome to AsynapRous server!"
+
     resp = Response()
     resp._content = response_body.encode('utf-8')
     resp.headers['Content-Type'] = 'text/plain'
-    
+
     header_str = resp.build_response_header(req)
     return header_str + resp._content
 
@@ -124,7 +124,7 @@ def app_logout(req):
         except Exception:
             pass
     body = '{"success": true}'
-    # Đặt thời hạn Max-Age=0 để Trình duyệt tự xóa Cookie
+    # Set Max-Age=0 to allow browser to auto-delete cookie
     res = (
         "HTTP/1.1 200 OK\r\n"
         "Set-Cookie: session_id=; Max-Age=0; Path=/; HttpOnly\r\n"
@@ -474,8 +474,8 @@ def master_api_handler(req, resp):
     if req.hook:
         return req.hook(req)
     elif req.method == 'GET':
-        # Xử lý các yêu cầu lấy file tĩnh (chỉ áp dụng cho GET)
+        # Handle static file requests (only applies to GET)
         return resp.build_response(req)
     else:
-        # Nếu là phương thức khác (POST, PUT...) mà không có API thì chặn luôn
+        # For other methods (POST, PUT...) without API route, block immediately
         return resp.build_notfound()

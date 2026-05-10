@@ -28,14 +28,14 @@ import asyncio
 import inspect
 import os
 import time
-import uuid # Thư viện tạo chuỗi ngẫu nhiên cho Session ID
+import uuid  # Library for generating random strings for Session ID
 
-# --- DATABASE LƯU COOKIE (TRÊN RAM) ---
+# --- DATABASE FOR SESSION STORAGE (IN RAM) ---
 MAX_SESSIONS = 100
 ACTIVE_SESSIONS = {}
 SESSION_TTL = 86400
 
-# --- DATABASE TÀI KHOẢN HỢP LỆ ---
+# --- DATABASE FOR VALID ACCOUNTS ---
 ACCOUNTS_FILE = os.path.normpath(
     os.path.join(os.path.dirname(__file__), "..", "db", "account.txt")
 )
@@ -64,9 +64,9 @@ VALID_USERS = load_valid_users() or {
 }
 
 def add_session(session_id, username):
-    """Hàm thêm Session mới, giới hạn tối đa 100 người"""
+    """Add a new session, limited to maximum 100 users."""
     if len(ACTIVE_SESSIONS) >= MAX_SESSIONS:
-        # Xóa người đăng nhập cũ nhất (đầu danh sách)
+        # Remove oldest logged-in user (first in list)
         oldest_key = next(iter(ACTIVE_SESSIONS))
         del ACTIVE_SESSIONS[oldest_key]
     ACTIVE_SESSIONS[session_id] = username
@@ -198,19 +198,19 @@ class HttpAdapter:
 
     def process_request(self, raw_msg, addr):
         """
-        Xử lý 1 HTTP request từ chuỗi raw đã có sẵn.
+        Process an HTTP request from a raw message string.
 
-        Đây là phần lõi của HttpAdapter, tách biệt hoàn toàn khỏi I/O.
-        Được gọi bởi cả 3 mode:
-            - threading    : gọi từ handle_client() sau khi recv() xong
-            - coroutine    : gọi từ handle_client_coroutine() sau await read()
-            - callback     : gọi từ eventloop.make_http_handler() sau select() recv
+        This is the core part of HttpAdapter, completely separated from I/O.
+        Called by all 3 modes:
+            - threading    : called from handle_client() after recv() completes
+            - coroutine    : called from handle_client_coroutine() after await read()
+            - callback     : called from eventloop.make_http_handler() after select() recv
 
-        :param raw_msg (str): Chuỗi HTTP request thô đã nhận đủ.
-        :param addr (tuple): Địa chỉ (ip, port) của client.
-        :return: bytes — HTTP response hoàn chỉnh sẵn sàng để sendall().
+        :param raw_msg (str): Raw HTTP request string already fully received.
+        :param addr (tuple): Client address (ip, port).
+        :return: bytes — Complete HTTP response ready for sendall().
         """
-        req  = self.request
+        req = self.request
         resp = self.response
 
         req.prepare(raw_msg, self.routes)
@@ -219,29 +219,29 @@ class HttpAdapter:
             getattr(req, 'method', '?'), getattr(req, 'path', '?')
         ))
 
-        # Guard: request rỗng hoặc lỗi parse
+        # Guard: empty or malformed request
         if not req.path:
             return b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n"
 
-        # ── Xác thực (Authentication) ────────────────────────────────
-        is_authenticated  = False
-        current_user      = None
+        # ── Authentication ────────────────────────────────────────
+        is_authenticated = False
+        current_user = None
         new_cookie_to_set = None
 
-        # 1. Kiểm tra Cookie session_id
+        # 1. Check Cookie session_id
         if req.cookies and 'session_id' in req.cookies:
             session_id = req.cookies['session_id']
             if session_id in ACTIVE_SESSIONS:
                 is_authenticated = True
-                current_user     = ACTIVE_SESSIONS[session_id]
+                current_user = ACTIVE_SESSIONS[session_id]
             else:
                 user = validate_session(session_id)
                 if user:
                     is_authenticated = True
-                    current_user     = user
+                    current_user = user
                     add_session(session_id, user)
 
-        # 2. Nếu chưa có Cookie → kiểm tra Basic Auth
+        # 2. If no Cookie → check Basic Auth
         if not is_authenticated and req.auth:
             import base64
             auth_parts = req.auth.split(' ')
@@ -250,16 +250,18 @@ class HttpAdapter:
                     decoded_str = base64.b64decode(auth_parts[1]).decode('utf-8')
                     username, password = decoded_str.split(':', 1)
                     if VALID_USERS.get(username) == password:
-                        is_authenticated  = True
-                        current_user      = username
-                        new_session       = create_session(username)
+                        is_authenticated = True
+                        current_user = username
+                        new_session = create_session(username)
                         add_session(new_session, username)
-                        new_cookie_to_set = f"session_id={new_session}; Path=/; HttpOnly"
-                        req.new_cookie    = new_cookie_to_set
+                        new_cookie_to_set = (
+                            f"session_id={new_session}; Path=/; HttpOnly"
+                        )
+                        req.new_cookie = new_cookie_to_set
                 except Exception as e:
                     print("[HttpAdapter] Auth decode error:", e)
 
-        # ── Phân quyền & Định tuyến ──────────────────────────────────
+        # ── Authorization & Routing ──────────────────────────────
         public_paths = ['/', '/login.html', '/register.html']
         is_public = (
             req.path in public_paths
@@ -275,10 +277,11 @@ class HttpAdapter:
         )
         api_paths = [
             '/online', '/signal', '/signal_poll',
-            '/submit-info', '/get-list', '/connect-peer', '/broadcast-peer', '/send-peer',
-            '/poll-messages'
+            '/submit-info', '/get-list', '/connect-peer', '/broadcast-peer',
+            '/send-peer', '/poll-messages'
         ]
-        is_api = (req.path.startswith('/api/') and req.path != '/api/login') or req.path in api_paths
+        is_api = ((req.path.startswith('/api/') and req.path != '/api/login')
+                  or req.path in api_paths)
 
         if not is_authenticated and not is_public:
             if is_api:
@@ -290,7 +293,7 @@ class HttpAdapter:
                     b"Content-Length: 0\r\n\r\n"
                 )
 
-        # ── Gọi API handler ──────────────────────────────────────────
+        # ── Call API handler ─────────────────────────────────────
         if new_cookie_to_set:
             resp.headers['Set-Cookie'] = new_cookie_to_set
         req.user = current_user
@@ -298,7 +301,7 @@ class HttpAdapter:
         from daemon.api import master_api_handler
         response = master_api_handler(req, resp)
 
-        # Nếu handler là coroutine → chạy đồng bộ
+        # If handler is coroutine → run synchronously
         if asyncio.iscoroutine(response):
             response = asyncio.run(response)
 
@@ -311,17 +314,17 @@ class HttpAdapter:
         """
         Handle an incoming client connection (threading mode).
 
-        Đọc dữ liệu từ socket, sau đó ủy quyền toàn bộ logic HTTP
-        cho process_request() — tránh trùng lặp code.
+        Read data from socket, then delegate all HTTP logic
+        to process_request() — avoid code duplication.
 
         :param conn (socket): The client socket connection.
         :param addr (tuple): The client's address.
         :param routes (dict): The route mapping for dispatching requests.
         """
-        self.conn    = conn
+        self.conn = conn
         self.connaddr = addr
 
-        # Đọc dữ liệu từ socket (tầng I/O)
+        # Read data from socket (I/O layer)
         msg = ""
         while True:
             chunk = conn.recv(1024).decode('utf-8', errors='ignore')
@@ -336,7 +339,7 @@ class HttpAdapter:
         print(msg[:200])
         print("="*40 + "\n")
 
-        # Ủy quyền xử lý HTTP cho process_request() (tầng HTTP)
+        # Delegate HTTP processing to process_request() (HTTP layer)
         response = self.process_request(msg, addr)
 
         conn.sendall(response)
@@ -345,36 +348,36 @@ class HttpAdapter:
 
     async def handle_client_coroutine(self, reader, writer):
         """
-        Xử lý kết nối bằng cơ chế Bất đồng bộ (coroutine mode).
+        Handle connection using async mechanism (coroutine mode).
 
-        Chỉ chịu trách nhiệm I/O bất đồng bộ:
-            - await reader.read()  → nhận dữ liệu không block event loop
-            - await writer.drain() → gửi response không block event loop
+        Only responsible for async I/O:
+            - await reader.read()  → receive data without blocking event loop
+            - await writer.drain() → send response without blocking event loop
 
-        Toàn bộ logic HTTP (parse, auth, routing) được ủy quyền cho
-        process_request() — tái sử dụng code, không trùng lặp.
+        All HTTP logic (parse, auth, routing) is delegated to
+        process_request() — reuse code, avoid duplication.
         """
         addr = writer.get_extra_info("peername")
 
         try:
-            # ── Đọc dữ liệu bất đồng bộ ─────────────────────────────
-            # await nhường CPU cho các kết nối khác trong lúc chờ dữ liệu đến
+            # ── Read data asynchronously ──────────────────────────
+            # await yields CPU to other connections while waiting for data
             msg_bytes = await reader.read(4096)
             if not msg_bytes:
                 return
 
             raw_msg = msg_bytes.decode('utf-8', errors='replace')
 
-            # ── Ủy quyền xử lý HTTP (sync) ──────────────────────────
-            # process_request() xử lý: parse → auth → routing → build response
+            # ── Delegate HTTP processing (sync) ───────────────────
+            # process_request() handles: parse → auth → routing → build response
             response = self.process_request(raw_msg, addr)
 
-            # ── Gửi response bất đồng bộ ─────────────────────────────
+            # ── Send response asynchronously ──────────────────────
             if isinstance(response, str):
                 response = response.encode('utf-8')
 
             writer.write(response)
-            await writer.drain()   # Nhường CPU khi đang flush buffer mạng
+            await writer.drain()  # Yield CPU while flushing network buffer
 
         except Exception as e:
             print("[HttpAdapter] handle_client_coroutine error:", e)

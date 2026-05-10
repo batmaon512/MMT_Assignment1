@@ -94,33 +94,36 @@ def handle_client_callback(server, ip, port,conn, addr, routes):
 # Wrap coroutine with routes closure
 def get_handle_client_coroutine(ip, port, routes):
     """
-    Tạo ra một vỏ bọc (wrapper) để truyền tham số `routes` vào hàm bất đồng bộ.
-    Mỗi khi có Khách hàng kết nối, một bản sao HttpAdapter mới sẽ được tạo ra.
+    Create a wrapper to pass the `routes` parameter into the async function.
+    Each time a client connects, a new HttpAdapter instance is created.
     """
     async def handle_client_coroutine(reader, writer):
         addr = writer.get_extra_info("peername")
-        print(f"[Backend] Siêu bồi bàn (Async) tiếp nhận Khách hàng từ {addr}")
-        
-        # TẠO RA MỘT HTTP ADAPTER ĐỘC LẬP CHO TỪNG KHÁCH HÀNG (OOP)
-        # Truyền danh bạ API (routes) vào để Adapter biết đường xử lý
+        print(f"[Backend] Async server accepted client from {addr}")
+
+        # CREATE AN INDEPENDENT HTTP ADAPTER FOR EACH CLIENT (OOP)
+        # Pass API routes to adapter so it knows how to process requests
         daemon = HttpAdapter(ip, port, None, addr, routes)
-        
-        # Bắt đầu xử lý Khách hàng (Sẽ nhường CPU khi gặp await)
+
+        # Start handling client (will yield CPU on await)
         await daemon.handle_client_coroutine(reader, writer)
     return handle_client_coroutine
 
 async def async_server(ip="0.0.0.0", port=7000, routes={}):
+    """Start async HTTP server using asyncio."""
     print("[Backend] async_server **ASYNC** listening on port {}".format(port))
     if routes != {}:
         print("[Backend] route settings")
         for key, value in routes.items():
             isCoFunc = ""
             if inspect.iscoroutinefunction(value):
-               isCoFunc += "**ASYNC** "
-            print("   + ('{}', '{}'): {}{}".format(key[0], key[1], isCoFunc, str(value)))
+                isCoFunc += "**ASYNC** "
+            print("   + ('{}', '{}'): {}{}".format(key[0], key[1], isCoFunc,
+                                                   str(value)))
 
-    # Khởi động Server chạy trên chế độ Bất đồng bộ (Event Loop)
-    async_server = await asyncio.start_server(get_handle_client_coroutine(ip, port, routes), ip, port)
+    # Start server in async mode (Event Loop)
+    async_server = await asyncio.start_server(
+        get_handle_client_coroutine(ip, port, routes), ip, port)
     async with async_server:
         await async_server.serve_forever()
     return
@@ -137,25 +140,25 @@ def run_backend(ip, port, routes):
     :param port (int): Port number to listen on.
     :param routes (dict): Dictionary of route handlers.
     """
-    # This global variable to configure the asynchrnous mode or not
+    # This global variable to configure the asynchronous mode or not
     global mode_async
 
     print("[Backend] run_backend mode={} routes={}".format(mode_async, routes))
 
     # --- Mode 1: Coroutine (asyncio) ---
     if mode_async == "coroutine":
-       asyncio.run(async_server(ip, port, routes))
-       return
+        asyncio.run(async_server(ip, port, routes))
+        return
 
     # --- Mode 3: Callback (select()) ---
     if mode_async == "callback":
-       from .eventloop import run_select_server
-       run_select_server(ip, port, routes)
-       return
+        from .eventloop import run_select_server
+        run_select_server(ip, port, routes)
+        return
 
     import select
-    
-    # Tao Socket cho HTTP
+
+    # Create HTTP socket
     server_http = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_http.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
@@ -167,10 +170,11 @@ def run_backend(ip, port, routes):
         if routes != {}:
             print("[Backend] route settings")
             for key, value in routes.items():
-               isCoFunc = ""
-               if inspect.iscoroutinefunction(value):
-                  isCoFunc += "**ASYNC** "
-               print("   + ('{}', '{}'): {}{}".format(key[0], key[1], isCoFunc, str(value)))
+                isCoFunc = ""
+                if inspect.iscoroutinefunction(value):
+                    isCoFunc += "**ASYNC** "
+                print("   + ('{}', '{}'): {}{}".format(key[0], key[1], isCoFunc,
+                                                       str(value)))
 
         while True:
             readable, _, _ = select.select([server_http], [], [])
@@ -190,7 +194,7 @@ def run_backend(ip, port, routes):
                     client_thread.start()
 
     except socket.error as e:
-      print("Socket error: {}".format(e))
+        print("Socket error: {}".format(e))
 
 
 def create_backend(ip, port, routes={}):

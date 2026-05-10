@@ -13,11 +13,11 @@ tracker_port = 9000
 MESSAGE_QUEUE = []
 
 # Local cache: { name -> {"ip": ..., "port": ...} }
-# Cho phép P2P hoạt động kể cả khi tracker offline.
+# Allow P2P to work even when tracker is offline.
 PEER_CACHE = {}
 
 # ─────────────────────────────────────────────────────────────────
-#  Tiện ích
+#  Utilities
 # ─────────────────────────────────────────────────────────────────
 
 def json_response(payload, status=200):
@@ -33,21 +33,21 @@ def json_response(payload, status=200):
 
 def make_tracker_request(path, data, req=None):
     """
-    Gửi request đến Tracker bằng blocking socket (không dùng asyncio).
+    Send request to Tracker using blocking socket (no asyncio).
 
-    :param path (str): API path trên tracker, vd "/submit-info".
-    :param data (dict): JSON body gửi đi.
-    :param req: HTTP Request object (để lấy cookie / auth nếu có).
-    :return: dict — JSON response từ tracker.
+    :param path (str): API path on tracker, e.g. "/submit-info".
+    :param data (dict): JSON body to send.
+    :param req: HTTP Request object (to get cookie / auth if available).
+    :return: dict — JSON response from tracker.
     """
     try:
         body = json.dumps(data).encode('utf-8')
 
-        # Thu thập headers tùy chọn
-        cookie     = ""
-        auth_hdr   = ""
+        # Gather optional headers
+        cookie = ""
+        auth_hdr = ""
         if req and req.headers:
-            cookie   = req.headers.get('cookie', '')
+            cookie = req.headers.get('cookie', '')
             auth_hdr = req.headers.get('authorization', '')
 
         http_request = (
@@ -60,13 +60,13 @@ def make_tracker_request(path, data, req=None):
             + f"Connection: close\r\n\r\n"
         ).encode('utf-8') + body
 
-        # Gửi qua blocking TCP socket
+        # Send over blocking TCP socket
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(0.5)
         s.connect((tracker_ip, tracker_port))
         s.sendall(http_request)
 
-        # Nhận response
+        # Receive response
         resp_bytes = b""
         while True:
             chunk = s.recv(4096)
@@ -89,7 +89,7 @@ def make_tracker_request(path, data, req=None):
 
 def send_to_peer_async(target_ip, target_port, payload):
     """
-    Gửi tin nhắn P2P không dùng threading, sử dụng kiến trúc EventLoop (Fire-and-Forget).
+    Send P2P message without threading, using EventLoop architecture (Fire-and-Forget).
     """
     from daemon.eventloop import EventLoop
     try:
@@ -119,7 +119,7 @@ def send_to_peer_async(target_ip, target_port, payload):
                     sent = sock.send(self.data[self.sent:])
                     self.sent += sent
                     if self.sent >= len(self.data):
-                        # Đã gửi xong, hủy đăng ký ghi, đăng ký đọc để chờ response
+                        # Send complete, unregister write, register read to wait for response
                         loop.unregister(sock)
                         loop.register_read(sock, self.do_read)
                 except BlockingIOError:
@@ -129,7 +129,7 @@ def send_to_peer_async(target_ip, target_port, payload):
 
             def do_read(self, sock):
                 try:
-                    sock.recv(4096) # Đọc bỏ response
+                    sock.recv(4096)  # Read and discard response
                     self.cleanup()
                 except BlockingIOError:
                     pass
@@ -145,8 +145,8 @@ def send_to_peer_async(target_ip, target_port, payload):
 
         sender = AsyncSender(s, http_request)
         loop.register_write(s, sender.do_write)
-        
-        # Terminator timeout: Dọn dẹp nếu peer kia không phản hồi trong 5 giây
+
+        # Terminator timeout: Clean up if peer does not respond within 5 seconds
         loop.call_later(5.0, sender.cleanup)
         return True
     except Exception as e:
@@ -162,7 +162,7 @@ def send_to_peer_async(target_ip, target_port, payload):
 def app_login(req):
     if getattr(req, 'user', None):
         global MESSAGE_QUEUE
-        MESSAGE_QUEUE.clear() # Dọn dẹp rác của tài khoản cũ
+        MESSAGE_QUEUE.clear()  # Clean up garbage from old account
         body = '{"success": true, "message": "Login successful"}'
         cookie_header = ""
         if hasattr(req, 'new_cookie') and req.new_cookie:
@@ -187,7 +187,7 @@ def app_login(req):
 @app.route('/api/logout', methods=['POST'])
 def app_logout(req):
     global MESSAGE_QUEUE
-    MESSAGE_QUEUE.clear() # Dọn dẹp hàng đợi khi thoát
+    MESSAGE_QUEUE.clear()  # Clean up queue on exit
     session_id = None
     if req.cookies:
         session_id = req.cookies.get('session_id')
@@ -215,7 +215,7 @@ def app_logout(req):
 
 @app.route('/submit-info', methods=['POST'])
 def submit_info(req):
-    """Đăng ký IP:port của peer này với tracker."""
+    """Register this peer's IP:port with tracker."""
     data = json.loads(req.body) if req.body else {}
     data["name"] = data.get("name") or getattr(req, "user", "")
     res = make_tracker_request("/submit-info", data, req)
@@ -224,10 +224,10 @@ def submit_info(req):
 
 @app.route('/get-list', methods=['POST'])
 def get_list(req):
-    """Lấy danh sách peers online từ tracker, lưu vào cache cục bộ."""
+    """Get list of online peers from tracker, save to local cache."""
     global PEER_CACHE
     res = make_tracker_request("/get-list", {}, req)
-    # Cập nhật cache để dùng offline
+    # Update cache for offline use
     if res.get("code") == 1:
         for peer in res.get("peers", []):
             name = peer.get("name")
@@ -239,7 +239,7 @@ def get_list(req):
 
 @app.route('/peers', methods=['POST'])
 def peers(req):
-    """Trả về danh sách peers trong cache cục bộ."""
+    """Return list of peers in local cache."""
     global PEER_CACHE
     peer_list = [
         {"name": n, "ip": info.get("ip"), "port": info.get("port")}
@@ -250,21 +250,21 @@ def peers(req):
 
 @app.route('/online', methods=['POST'])
 def online(req):
-    """Heartbeat: báo cho tracker biết peer này vẫn online."""
+    """Heartbeat: notify tracker that this peer is still online."""
     global PEER_CACHE
     data = json.loads(req.body) if req.body else {}
     data["name"] = data.get("name") or getattr(req, "user", "")
     res = make_tracker_request("/online", data, req)
-    # Không dùng fallback nữa, trả thẳng kết quả thực tế (code 0) từ Tracker
+    # No fallback anymore, return actual result (code 0) from Tracker
     return json_response(res)
 
 
 @app.route('/connect-peer', methods=['POST'])
 def connect_peer(req):
     """
-    Lấy thông tin kết nối đến 1 peer cụ thể.
+    Get connection info to a specific peer.
 
-    Thử cache cục bộ trước, fallback về tracker nếu không có.
+    Try local cache first, fallback to tracker if not available.
     """
     global PEER_CACHE
     data = json.loads(req.body) if req.body else {}
@@ -272,7 +272,7 @@ def connect_peer(req):
     if not target:
         return json_response({"code": 0, "message": "Missing target"})
 
-    # Thử cache trước
+    # Try cache first
     if target in PEER_CACHE:
         peer = PEER_CACHE[target]
         return json_response({
@@ -281,7 +281,7 @@ def connect_peer(req):
             "peer": {"name": target, **peer}
         })
 
-    # Hỏi tracker
+    # Ask tracker
     peers_res = make_tracker_request("/get-list", {}, req)
     target_peer = next(
         (p for p in peers_res.get("peers", []) if p["name"] == target),
@@ -296,15 +296,15 @@ def connect_peer(req):
 
 
 # ─────────────────────────────────────────────────────────────────
-#  P2P routes (sync, blocking socket, threading cho broadcast)
+#  P2P routes (sync, blocking socket, threading for broadcast)
 # ─────────────────────────────────────────────────────────────────
 
 @app.route('/send-peer', methods=['POST'])
 def send_peer(req):
     """
-    Gửi tin nhắn trực tiếp đến 1 peer (P2P).
+    Send message directly to a peer (P2P).
 
-    Không qua tracker. Dùng blocking socket.
+    No tracker involved. Uses blocking socket.
     """
     global PEER_CACHE
     data = json.loads(req.body) if req.body else {}
@@ -315,7 +315,7 @@ def send_peer(req):
     if not target_name or not message:
         return json_response({"code": 0, "message": "Missing fields"})
 
-    # Thử cache trước
+    # Try cache first
     target_peer = PEER_CACHE.get(target_name)
     if not target_peer:
         peers_res = make_tracker_request("/get-list", {}, req)
@@ -350,10 +350,10 @@ def send_peer(req):
 @app.route('/broadcast-peer', methods=['POST'])
 def broadcast_peer(req):
     """
-    Gửi tin nhắn đến TẤT CẢ peers đồng thời (P2P broadcast).
+    Send message to ALL peers simultaneously (P2P broadcast).
 
-    Dùng threading thay vì asyncio.gather() để gửi song song.
-    Mỗi peer nhận được 1 thread riêng → không chặn nhau.
+    Uses threading instead of asyncio.gather() for parallel send.
+    Each peer gets its own thread -> no blocking each other.
     """
     global PEER_CACHE
     data = json.loads(req.body) if req.body else {}
@@ -363,7 +363,7 @@ def broadcast_peer(req):
     if not message:
         return json_response({"code": 0, "message": "Missing message"})
 
-    # Cập nhật cache từ tracker (nếu tracker online)
+    # Update cache from tracker (if tracker is online)
     try:
         peers_res = make_tracker_request("/get-list", {}, req)
         for p in peers_res.get("peers", []):
@@ -371,7 +371,7 @@ def broadcast_peer(req):
             if name:
                 PEER_CACHE[name] = {"ip": p["ip"], "port": p["port"]}
     except Exception:
-        pass   # Dùng cache cũ nếu tracker offline
+        pass   # Use old cache if tracker offline
 
     payload = {
         "from": sender_name,
@@ -380,7 +380,7 @@ def broadcast_peer(req):
         "time": time.time() * 1000
     }
 
-    # Gửi đồng thời đến tất cả peers bằng EventLoop (Fire-and-Forget)
+    # Send simultaneously to all peers using EventLoop (Fire-and-Forget)
     for name, info in PEER_CACHE.items():
         if name == sender_name:
             continue
@@ -391,7 +391,7 @@ def broadcast_peer(req):
 
 @app.route('/internal/receive-msg', methods=['POST'])
 def internal_receive_msg(req):
-    """Nhận tin nhắn đến từ peer khác (P2P endpoint)."""
+    """Receive message from another peer (P2P endpoint)."""
     global MESSAGE_QUEUE
     if req.body:
         try:
@@ -405,7 +405,7 @@ def internal_receive_msg(req):
 
 @app.route('/poll-messages', methods=['POST'])
 def poll_messages(req):
-    """Lấy và xóa tất cả tin nhắn đang chờ trong hàng đợi."""
+    """Get and remove all pending messages from the queue."""
     global MESSAGE_QUEUE
     msgs = list(MESSAGE_QUEUE)
     MESSAGE_QUEUE.clear()

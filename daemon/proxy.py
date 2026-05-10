@@ -78,7 +78,7 @@ def forward_request(host, port, request):
         ).encode('utf-8')
 
 
-# Biến toàn cục lưu trữ index xoay vòng cho từng hostname
+# Global variable storing round-robin index for each hostname
 rr_indices = {}
 
 def resolve_routing_policy(hostname, routes):
@@ -101,13 +101,13 @@ def resolve_routing_policy(hostname, routes):
             proxy_host, proxy_port = proxy_map[0].split(":", 1)
         else:
             if policy == 'round-robin':
-                # Triển khai True Round-Robin
+                # Implement True Round-Robin
                 idx = rr_indices.get(hostname, 0)
                 chosen = proxy_map[idx]
                 rr_indices[hostname] = (idx + 1) % len(proxy_map)
                 proxy_host, proxy_port = chosen.split(":", 1)
             else:
-                # Fallback ngẫu nhiên nếu không phải round-robin
+                # Random fallback if not round-robin
                 import random
                 chosen = random.choice(proxy_map)
                 proxy_host, proxy_port = chosen.split(":", 1)

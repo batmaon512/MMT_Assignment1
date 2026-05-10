@@ -6,13 +6,13 @@ import statistics
 import csv
 import os
 
-# Cấu hình
-DEFAULT_HOST     = "127.0.0.1"
-DEFAULT_TH_PORT  = 9010
-DEFAULT_CB_PORT  = 9020
-DEFAULT_AS_PORT  = 9030
+# Configuration
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_TH_PORT = 9010
+DEFAULT_CB_PORT = 9020
+DEFAULT_AS_PORT = 9030
 DEFAULT_PROXY_PORT = 8080
-DEFAULT_N        = 2000
+DEFAULT_N = 2000
 DEFAULT_STEP     = 200
 DEFAULT_ENDPOINT = "/status"
 
@@ -98,7 +98,7 @@ def save_csv(filename, headers, rows):
         writer = csv.writer(f)
         writer.writerow(headers)
         writer.writerows(rows)
-    print(f"✅ Đã xuất dữ liệu ra file: {filename}")
+    print(f"✅ Data exported to file: {filename}")
 
 def main():
     parser = argparse.ArgumentParser(description="Benchmark Load Balancer")
@@ -119,7 +119,7 @@ def main():
 
     csv_servers = []
 
-    print("\n--- BENCHMARK TỪNG SERVER ---")
+    print("\n--- BENCHMARK EACH SERVER ---")
     print(f" {'Concurrency':>11} | {'Mode':>10} | {'RPS (req/s)':>12} | {'Avg (ms)':>10} | {'P95 (ms)':>10} | {'Errors':>6}")
     print("-" * 85)
 
@@ -139,9 +139,9 @@ def main():
         print("-" * 85)
 
     print("\n" + "="*85)
-    
-    # Tính toán nhà vô địch
-    print("  TỔNG KẾT NHÀ VÔ ĐỊCH THÔNG LƯỢNG (RPS Cao Nhất):")
+
+    # Calculate champion
+    print("  SUMMARY OF THROUGHPUT CHAMPION (Highest RPS):")
     for c in steps:
         scores = []
         for row in csv_servers:
@@ -150,7 +150,7 @@ def main():
         if scores:
             scores.sort(key=lambda x: x[1], reverse=True)
             winner = scores[0][0] if scores[0][1] > 0 else "N/A"
-            print(f"   - Mức đồng thời {c:<4}: 🏆 {winner}")
+            print(f"   - Concurrency {c:<4}: 🏆 {winner}")
 
     headers = ["Concurrency", "Mode", "RPS", "Avg_ms", "P95_ms", "Errors"]
     save_csv("benchmark_servers.csv", headers, csv_servers)

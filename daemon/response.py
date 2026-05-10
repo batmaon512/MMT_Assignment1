@@ -253,7 +253,7 @@ class Response():
 
         # TODO: implement the cookie function here
         # TODO prepare the request authentication
-        # Gộp tất cả các header được set từ bên ngoài (như Set-Cookie do httpadapter chỉ định)
+        # Merge all headers set externally (like Set-Cookie set by httpadapter)
         for k, v in self.headers.items():
             if k not in headers:
                 headers[k] = v
@@ -328,19 +328,19 @@ class Response():
         elif mime_type.startswith('video/'):
             base_dir = self.prepare_content_type(mime_type = mime_type)
         elif mime_type.startswith('audio/'):
-            base_dir = self.prepare_content_type(mime_type = mime_type)
+            base_dir = self.prepare_content_type(mime_type=mime_type)
         elif mime_type == 'application/zip':
-            base_dir = self.prepare_content_type(mime_type = mime_type)
+            base_dir = self.prepare_content_type(mime_type=mime_type)
         else:
             return self.build_notfound()
-            
-        # 1. Gọi thợ phụ lấy file từ ổ cứng lên
+
+        # 1. Call helper to load file from disk
         length, self._content = self.build_content(path, base_dir)
-        if length == -1:  # File không tồn tại hoặc lỗi đọc file
+        if length == -1:  # File does not exist or read error
             return self.build_notfound()
-            
-        # 2. Gọi thợ phụ tạo Header
+
+        # 2. Call helper to build Header
         self._header = self.build_response_header(request)
 
-        # 3. Gộp Header và Body lại thành một khối hoàn chỉnh
+        # 3. Merge Header and Body into complete block
         return self._header + self._content

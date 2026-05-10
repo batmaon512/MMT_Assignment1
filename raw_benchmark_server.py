@@ -1,9 +1,9 @@
 """
 raw_benchmark_server.py
 =======================
-Khởi chạy một máy chủ siêu nhẹ (Không HTTP Parsing, Không Routing, Không Object).
-Mục đích: Đo lường giới hạn thông lượng mạng thuần túy (Raw Network Throughput)
-của 3 kiến trúc: Threading, Select (Callback) và Asyncio.
+Start an ultra-lightweight server (No HTTP Parsing, No Routing, No Object).
+Purpose: Measure pure network throughput limit (Raw Network Throughput)
+of 3 architectures: Threading, Select (Callback) and Asyncio.
 """
 import socket
 import select
@@ -27,7 +27,7 @@ def run_threading(port):
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind(("0.0.0.0", port))
     server.listen(1000)
-    print(f"[RAW THREADING] Sẵn sàng tại cổng {port}...")
+    print(f"[RAW THREADING] Ready on port {port}...")
     while True:
         try:
             conn, _ = server.accept()
@@ -45,7 +45,7 @@ def run_callback(port):
     r_list = [server]
     w_list = []
 
-    print(f"[RAW CALLBACK - select()] Sẵn sàng tại cổng {port}...")
+    print(f"[RAW CALLBACK - select()] Ready on port {port}...")
     while True:
         try:
             readable, writable, _ = select.select(r_list, w_list, [])
@@ -56,10 +56,10 @@ def run_callback(port):
                     r_list.append(conn)
                 else:
                     try:
-                        data = s.recv(1024) # Chỉ đọc cho có, không parse
+                        data = s.recv(1024) # Read only, no parsing
                         if data:
                             r_list.remove(s)
-                            w_list.append(s) # Chuyển sang hàng đợi gửi
+                            w_list.append(s) # Move to send queue
                         else:
                             r_list.remove(s)
                             s.close()
@@ -69,7 +69,7 @@ def run_callback(port):
             
             for s in writable:
                 try:
-                    s.sendall(RESPONSE) # Bắn thẳng phản hồi
+                    s.sendall(RESPONSE) # Send response directly
                 except:
                     pass
                 finally:
@@ -91,7 +91,7 @@ async def handle_async(reader, writer):
         writer.close()
 
 def run_asyncio(port):
-    print(f"[RAW ASYNCIO] Sẵn sàng tại cổng {port}...")
+    print(f"[RAW ASYNCIO] Ready on port {port}...")
     async def main():
         server = await asyncio.start_server(handle_async, "0.0.0.0", port)
         async with server:

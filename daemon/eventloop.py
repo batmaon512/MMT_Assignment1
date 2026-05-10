@@ -2,18 +2,18 @@
 daemon.eventloop
 ~~~~~~~~~~~~~~~~
 
-Module Event Loop tự xây dựng cho daemon package.
-Cơ chế: select.select() — 1 thread, nhiều kết nối.
+Custom-built Event Loop for daemon package.
+Mechanism: select.select() — 1 thread, multiple connections.
 
-Không dùng asyncio. Không dùng selectors.
-Chỉ dùng: socket, select, threading (Lock).
+Does not use asyncio. Does not use selectors.
+Uses only: socket, select, threading (Lock).
 
-Các class chính:
-    - EventLoop        : Vòng lặp sự kiện trung tâm (singleton)
-    - SelectHTTPServer : HTTP server tích hợp EventLoop + HttpAdapter pipeline
+Main classes:
+    - EventLoop        : Central event loop (singleton)
+    - SelectHTTPServer : HTTP server integrating EventLoop + HttpAdapter pipeline
 
-Cách dùng trong AsynapRous / trackerapp / chatapp:
-    Tự động khi backend chạy ở mode "callback":
+Usage with AsynapRous / trackerapp / chatapp:
+    Automatic when backend runs in "callback" mode:
         python start_backend.py --mode callback
         python start_chatapp.py --mode callback
 """
@@ -28,81 +28,86 @@ from collections import deque
 
 
 # =============================================================================
-#  CallbackRegistry — Danh bạ ánh xạ socket → handler function
+#  CallbackRegistry — Maps socket → handler function
 # =============================================================================
 
 class CallbackRegistry:
     """
-    Lưu trữ ánh xạ: socket → callback function.
+    Stores the mapping: socket → callback function.
 
-    Khi select() báo socket X sẵn sàng, EventLoop tra bảng này
-    để biết cần gọi hàm nào.
+    When select() reports socket X is ready, EventLoop queries this table
+    to determine which function to call.
 
     Attributes:
-        _read_callbacks  (dict): {socket: func} cho sự kiện ĐỌC.
-        _write_callbacks (dict): {socket: func} cho sự kiện GHI.
-        _lock (Lock): Bảo vệ truy cập đồng thời từ nhiều thread.
+        _read_callbacks (dict): {socket: func} for READ events.
+        _write_callbacks (dict): {socket: func} for WRITE events.
+        _lock (Lock): Protects concurrent access from multiple threads.
     """
 
     def __init__(self):
-        self._read_callbacks  = {}
+        self._read_callbacks = {}
         self._write_callbacks = {}
         self._lock = threading.Lock()
 
     def register_read(self, sock, callback):
-        """Đăng ký callback cho sự kiện ĐỌC trên sock."""
+        """Register callback for READ event on socket."""
         with self._lock:
             self._read_callbacks[sock] = callback
 
     def register_write(self, sock, callback):
-        """Đăng ký callback cho sự kiện GHI trên sock."""
+        """Register callback for WRITE event on socket."""
         with self._lock:
             self._write_callbacks[sock] = callback
 
     def unregister(self, sock):
-        """Hủy theo dõi sock (gọi khi đóng kết nối)."""
+        """Stop monitoring socket (called when closing connection)."""
         with self._lock:
             self._read_callbacks.pop(sock, None)
             self._write_callbacks.pop(sock, None)
 
     def get_read_sockets(self):
+        """Get list of sockets registered for READ events."""
         with self._lock:
             return list(self._read_callbacks.keys())
 
     def get_write_sockets(self):
+        """Get list of sockets registered for WRITE events."""
         with self._lock:
             return list(self._write_callbacks.keys())
 
     def get_read_callback(self, sock):
+        """Get READ callback for socket, or None."""
         with self._lock:
             return self._read_callbacks.get(sock)
 
     def get_write_callback(self, sock):
+        """Get WRITE callback for socket, or None."""
         with self._lock:
             return self._write_callbacks.get(sock)
 
 
 # =============================================================================
-#  TaskQueue — Hàng đợi task chạy ngay trong vòng lặp tiếp theo
+#  TaskQueue — Queue for immediate tasks in next event loop iteration
 # =============================================================================
 
 class TaskQueue:
     """
-    Hàng đợi cho các callback cần chạy NGAY (không cần chờ I/O).
+    Queue for callbacks that need to run IMMEDIATELY (no I/O wait needed).
 
-    Tương đương với asyncio.call_soon().
+    Equivalent to asyncio.call_soon().
     """
 
     def __init__(self):
         self._queue = deque()
-        self._lock  = threading.Lock()
+        self._lock = threading.Lock()
 
     def enqueue(self, callback, *args):
+        """Add a callback and its arguments to the queue."""
         with self._lock:
             self._queue.append((callback, args))
 
     def drain(self):
-        """Lấy và chạy tất cả task đang chờ."""
+        """Retrieve and execute all pending tasks."""
         with self._lock:
             pending = list(self._queue)
             self._queue.clear()
@@ -114,11 +119,12 @@ class TaskQueue:
 
 
 # =============================================================================
-#  EventLoop — Trái tim của hệ thống
+#  EventLoop — Heart of the system
 # =============================================================================
 
 class TimerHandle:
-    """Đối tượng đại diện cho một tác vụ hẹn giờ."""
+    """Represents a scheduled timer task."""
+
     def __init__(self, execute_at, callback, args):
         self.execute_at = execute_at
         self.callback = callback
@@ -126,30 +132,32 @@ class TimerHandle:
         self.cancelled = False
 
     def __lt__(self, other):
+        """Compare timer handles by execution time for heap ordering."""
         return self.execute_at < other.execute_at
 
     def cancel(self):
+        """Mark this timer as cancelled."""
         self.cancelled = True
 
 class EventLoop:
     """
-    Vòng lặp sự kiện (Event Loop) tự xây dựng bằng select().
+    Custom-built Event Loop using select().
 
-    Nguyên lý 1 vòng lặp (1 tick):
-        1. Chạy hết task trong TaskQueue (pending callbacks)
-        2. Gọi select.select() → OS trả về danh sách socket sẵn sàng
-        3. Gọi callback đã đăng ký cho từng socket sẵn sàng
-        4. Quay lại bước 1
+    One event loop iteration (one tick):
+        1. Drain all tasks in TaskQueue (pending callbacks)
+        2. Call select.select() → OS returns list of ready sockets
+        3. Call registered callback for each ready socket
+        4. Return to step 1
 
-    Singleton: toàn bộ process dùng chung 1 EventLoop instance.
+    Singleton: entire process shares one EventLoop instance.
     """
 
     _instance = None
-    _lock      = threading.Lock()
+    _lock = threading.Lock()
 
     @classmethod
     def get_instance(cls, select_timeout=0.05):
-        """Lấy hoặc tạo EventLoop singleton."""
+        """Get or create EventLoop singleton instance."""
         with cls._lock:
             if cls._instance is None:
                 cls._instance = cls(select_timeout)
@@ -157,23 +165,26 @@ class EventLoop:
 
     @classmethod
     def reset(cls):
-        """Reset singleton (dùng cho test)."""
+        """Reset singleton instance (for testing)."""
         with cls._lock:
             cls._instance = None
 
     def __init__(self, select_timeout=0.05):
         """
-        :param select_timeout (float): Thời gian (giây) select() chờ tối đa
-               khi không có sự kiện. Mặc định 50ms.
+        Initialize EventLoop.
+
+        :param select_timeout (float): Maximum time in seconds that select()
+                                       waits when no events are pending.
+                                       Default: 50ms.
         """
-        self._registry       = CallbackRegistry()
-        self._task_queue     = TaskQueue()
-        self._timers         = [] # Hàng đợi Min-Heap cho hẹn giờ
-        self._running        = False
+        self._registry = CallbackRegistry()
+        self._task_queue = TaskQueue()
+        self._timers = []  # Min-Heap priority queue for scheduled timers
+        self._running = False
         self._select_timeout = select_timeout
 
     def call_later(self, delay, callback, *args):
-        """Lên lịch callback chạy sau `delay` giây."""
+        """Schedule callback to run after `delay` seconds."""
         execute_at = time.time() + delay
         handle = TimerHandle(execute_at, callback, args)
         with self._lock:
@@ -186,90 +197,94 @@ class EventLoop:
 
     def register_read(self, sock, callback):
         """
-        Đăng ký: Khi sock có dữ liệu đến → gọi callback(sock).
+        Register callback: when socket has data → call callback(sock).
 
-        :param sock: socket object (phải ở non-blocking mode).
-        :param callback: callable nhận 1 tham số là sock.
+        :param sock: socket object (must be in non-blocking mode).
+        :param callback: callable accepting one parameter (socket).
         """
         self._registry.register_read(sock, callback)
 
     def register_write(self, sock, callback):
-        """Đăng ký: Khi sock có thể ghi → gọi callback(sock)."""
+        """
+        Register callback: when socket is writable → call callback(sock).
+
+        :param sock: socket object (must be in non-blocking mode).
+        :param callback: callable accepting one parameter (socket).
+        """
         self._registry.register_write(sock, callback)
 
     def unregister(self, sock):
-        """Hủy theo dõi sock."""
+        """Stop monitoring socket."""
         self._registry.unregister(sock)
 
     def call_soon(self, callback, *args):
-        """Lên lịch callback chạy trong vòng lặp tiếp theo."""
+        """Schedule callback to run in the next event loop iteration."""
         self._task_queue.enqueue(callback, *args)
 
     # ------------------------------------------------------------------
-    #  Vòng lặp chính
+    #  Main event loop
     # ------------------------------------------------------------------
 
     def _run_once(self):
-        """
-        Thực hiện 1 iteration của event loop.
-        """
-        # Bước 1: Drain TaskQueue
+        """Execute one iteration of the event loop."""
+        # Step 1: Process all pending tasks
         self._task_queue.drain()
 
-        # Bước 1.5: Xử lý các Timer đã đến hạn
+        # Step 2: Process timers that have reached their deadline
         now = time.time()
         with self._lock:
             while self._timers and self._timers[0].execute_at <= now:
                 handle = heapq.heappop(self._timers)
                 if not handle.cancelled:
                     self._task_queue.enqueue(handle.callback, *handle.args)
-        
-        # Bước 2: Tính toán timeout thông minh cho select()
+
+        # Step 3: Calculate intelligent timeout for select()
         timeout = self._select_timeout
         with self._lock:
             if self._timers:
                 time_to_next = self._timers[0].execute_at - time.time()
                 timeout = max(0.0, min(timeout, time_to_next))
 
-        r_list = self._registry.get_read_sockets()
-        w_list = self._registry.get_write_sockets()
+        read_sockets = self._registry.get_read_sockets()
+        write_sockets = self._registry.get_write_sockets()
 
-        if not r_list and not w_list:
+        if not read_sockets and not write_sockets:
             time.sleep(timeout)
             return
 
         try:
             readable, writable, _ = select.select(
-                r_list, w_list, [], timeout
+                read_sockets, write_sockets, [], timeout
             )
         except (ValueError, OSError):
-            self._cleanup_dead_sockets(r_list, w_list)
+            self._cleanup_dead_sockets(read_sockets, write_sockets)
             return
 
-        # Bước 3a: Xử lý sự kiện ĐỌC
+        # Step 4a: Process READ events
         for sock in readable:
-            cb = self._registry.get_read_callback(sock)
-            if cb:
+            callback = self._registry.get_read_callback(sock)
+            if callback:
                 try:
-                    cb(sock)
+                    callback(sock)
                 except Exception:
                     traceback.print_exc()
                     self.unregister(sock)
 
-        # Bước 3b: Xử lý sự kiện GHI
+        # Step 4b: Process WRITE events
         for sock in writable:
-            cb = self._registry.get_write_callback(sock)
-            if cb:
+            callback = self._registry.get_write_callback(sock)
+            if callback:
                 try:
-                    cb(sock)
+                    callback(sock)
                 except Exception:
                     traceback.print_exc()
                     self.unregister(sock)
 
     def run_forever(self):
         """
-        Chạy event loop liên tục cho đến khi gọi stop().
-        1 thread duy nhất phục vụ nhiều kết nối đồng thời.
+        Run event loop continuously until stop() is called.
+
+        One thread serves multiple concurrent connections.
         """
         print("[EventLoop] Starting select()-based event loop")
         self._running = True
@@ -278,11 +293,12 @@ class EventLoop:
         print("[EventLoop] Stopped.")
 
     def stop(self):
-        """Dừng vòng lặp sau khi kết thúc iteration hiện tại."""
+        """Stop the event loop after completing current iteration."""
         self._running = False
 
-    def _cleanup_dead_sockets(self, r_list, w_list):
-        for sock in r_list + w_list:
+    def _cleanup_dead_sockets(self, read_list, write_list):
+        """Remove dead/closed sockets from the registry."""
+        for sock in read_list + write_list:
             try:
                 select.select([sock], [], [], 0)
             except (ValueError, OSError):
@@ -290,103 +306,105 @@ class EventLoop:
 
 
 # =============================================================================
-#  ConnectionBuffer — Buffer gom dữ liệu từng mảnh của 1 kết nối
+#  ConnectionBuffer — Aggregates partial data from one connection
 # =============================================================================
 
 class ConnectionBuffer:
     """
-    Buffer lưu dữ liệu chưa đọc hết của 1 TCP kết nối.
+    Buffer that stores incomplete data from one TCP connection.
 
-    Lý do cần buffer:
-    - select() báo "readable" không có nghĩa toàn bộ request đã đến.
-    - recv() có thể trả về từng phần nhỏ → cần gom lại.
-    - HTTP request kết thúc bằng \\r\\n\\r\\n → ta biết request đã đầy đủ.
+    Why we need a buffer:
+    - select() saying "readable" doesn't mean the complete request arrived.
+    - recv() may return data in small chunks → we need to accumulate.
+    - HTTP request ends with \\r\\n\\r\\n → lets us know when complete.
 
-    :param conn: socket kết nối với client.
-    :param addr: (ip, port) của client.
+    :param conn: socket connection with client.
+    :param addr: (ip, port) of client.
     """
 
     def __init__(self, conn, addr):
-        self.conn   = conn
-        self.addr   = addr
+        self.conn = conn
+        self.addr = addr
         self.buffer = b""
-        self.done   = False   # True khi đã nhận đủ 1 HTTP request
+        self.done = False  # True when a complete HTTP request is received
         self.last_active_time = time.time()
 
     def feed(self, data: bytes):
-        """Thêm dữ liệu vào buffer. Đánh dấu done khi gặp \\r\\n\\r\\n."""
+        """Add data to buffer. Mark done when \\r\\n\\r\\n is encountered."""
         self.last_active_time = time.time()
         self.buffer += data
         if b"\r\n\r\n" in self.buffer:
             self.done = True
-            
+
     def reset(self):
-        """Reset buffer để tái sử dụng socket (Keep-Alive)."""
+        """Reset buffer for socket reuse (Keep-Alive)."""
         self.buffer = b""
         self.done = False
         self.last_active_time = time.time()
 
     def get_request(self) -> str:
-        """Trả về toàn bộ request dưới dạng string."""
+        """Return the complete request as a string."""
         return self.buffer.decode("utf-8", errors="replace")
 
 
 # =============================================================================
-#  SelectHTTPServer — HTTP Server tích hợp EventLoop
+#  SelectHTTPServer — HTTP Server integrated with EventLoop
 # =============================================================================
 
 class SelectHTTPServer:
     """
-    HTTP Server sử dụng EventLoop (select-based).
+    HTTP Server using EventLoop (select-based).
 
-    Tích hợp với HttpAdapter pipeline của daemon thông qua
-    tham số request_handler.
+    Integrates with daemon's HttpAdapter pipeline via request_handler.
 
-    Luồng xử lý 1 request:
-        Client kết nối
+    Request processing flow:
+        Client connects
             → server_sock readable → _on_new_connection()
             → accept() + register_read(conn, _on_data)
-        Client gửi data
+        Client sends data
             → conn readable → _on_data()
-            → gom vào ConnectionBuffer
-            → đủ request → _handle_request()
-            → gọi request_handler(raw_request, addr) → bytes
-            → sendall() → đóng conn
+            → aggregate into ConnectionBuffer
+            → complete request → _handle_request()
+            → call request_handler(raw_request, addr) → bytes
+            → sendall() → close conn
 
-    :param ip: IP bind (vd: "0.0.0.0").
-    :param port: Port lắng nghe.
+    :param ip: IP to bind (e.g., "0.0.0.0").
+    :param port: Port to listen on.
     :param request_handler: callable(raw_request: str, addr: tuple) -> bytes.
-                            Xem HttpAdapter.make_callback_handler() để tạo handler
-                            đầy đủ (auth + routing + response).
+                            See HttpAdapter.process_request() for complete
+                            handler (auth + routing + response).
     """
 
     def __init__(self, ip: str, port: int, request_handler):
-        self.ip              = ip
-        self.port            = port
+        self.ip = ip
+        self.port = port
         self.request_handler = request_handler
-        self.loop            = EventLoop.get_instance()
-        self._buffers        = {}   # {conn: ConnectionBuffer}
-        self._server_sock    = None
-        
-        # Bắt đầu vòng tuần tra dọn rác (mỗi 10 giây)
+        self.loop = EventLoop.get_instance()
+        self._buffers = {}  # {conn: ConnectionBuffer}
+        self._server_sock = None
+
+        # Start periodic cleanup (every 10 seconds)
         self.loop.call_later(10.0, self._cleanup_idle_connections)
 
     def start(self):
-        """Tạo server socket và đăng ký vào event loop."""
-        self._server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        """Create server socket and register with event loop."""
+        self._server_sock = socket.socket(socket.AF_INET,
+                                          socket.SOCK_STREAM)
+        self._server_sock.setsockopt(socket.SOL_SOCKET,
+                                     socket.SO_REUSEADDR, 1)
         self._server_sock.setblocking(False)
         self._server_sock.bind((self.ip, self.port))
         self._server_sock.listen(128)
 
-        self.loop.register_read(self._server_sock, self._on_new_connection)
+        self.loop.register_read(self._server_sock,
+                                self._on_new_connection)
         print(f"[SelectHTTPServer] Listening on {self.ip}:{self.port}")
 
     def _on_new_connection(self, server_sock):
         """
-        Callback: Có client kết nối đến.
+        Callback: Client connection incoming.
 
-        accept() lấy conn mới, đặt non-blocking, đăng ký _on_data.
+        accept() gets new connection, sets non-blocking, registers _on_data.
         """
         try:
             conn, addr = server_sock.accept()
@@ -401,10 +419,10 @@ class SelectHTTPServer:
 
     def _on_data(self, conn):
         """
-        Callback: conn có dữ liệu để đọc.
+        Callback: Socket has data to read.
 
-        Non-blocking recv() → gom vào buffer.
-        Khi buffer đủ 1 HTTP request → xử lý.
+        Non-blocking recv() → aggregate into buffer.
+        When buffer has complete HTTP request → process it.
         """
         buf = self._buffers.get(conn)
         if not buf:
@@ -414,13 +432,13 @@ class SelectHTTPServer:
         try:
             data = conn.recv(4096)
         except BlockingIOError:
-            return   # Chưa có dữ liệu — chờ select() lần sau
+            return  # No data yet — wait for next select()
         except OSError:
             self._close_conn(conn)
             return
 
         if not data:
-            self._close_conn(conn)  # Client đóng kết nối
+            self._close_conn(conn)  # Client closed connection
             return
 
         buf.feed(data)
@@ -429,42 +447,40 @@ class SelectHTTPServer:
             self._handle_request(conn, buf)
 
     def _handle_request(self, conn, buf):
-        """
-        Gọi request_handler để xử lý HTTP request và gửi response.
-        """
+        """Call request_handler to process HTTP request and send response."""
         try:
             raw_request = buf.get_request()
-            response    = self.request_handler(raw_request, buf.addr)
+            response = self.request_handler(raw_request, buf.addr)
 
             if isinstance(response, str):
                 response = response.encode("utf-8")
 
             conn.sendall(response)
-            
-            # --- KIỂM TRA KEEP-ALIVE ---
+
+            # --- CHECK KEEP-ALIVE ---
             if "connection: keep-alive" in raw_request.lower():
-                buf.reset() # Tái sử dụng ống nước, không đóng!
+                buf.reset()  # Reuse connection, don't close!
             else:
-                self._close_conn(conn) # Đóng kết nối
+                self._close_conn(conn)  # Close connection
 
         except Exception:
             traceback.print_exc()
             self._close_conn(conn)
 
     def _cleanup_idle_connections(self):
-        """Cai ngục đi tuần tiêu diệt kết nối nhàn rỗi (> 60s)"""
+        """Periodic cleanup: terminate idle connections (> 60s)."""
         now = time.time()
         for conn, buf in list(self._buffers.items()):
             if now - buf.last_active_time > 60.0:
                 print(f"[Terminator] Timeout closing idle connection: {buf.addr}")
                 self._close_conn(conn)
-                
-        # Tiếp tục hẹn giờ cho lần đi tuần sau
+
+        # Schedule next cleanup
         if self.loop._running:
             self.loop.call_later(10.0, self._cleanup_idle_connections)
 
     def _close_conn(self, conn):
-        """Đóng kết nối và dọn dẹp khỏi registry."""
+        """Close connection and clean up from registry."""
         self.loop.unregister(conn)
         self._buffers.pop(conn, None)
         try:
@@ -474,37 +490,37 @@ class SelectHTTPServer:
 
 
 # =============================================================================
-#  HttpAdapter Integration — Tích hợp với daemon.httpadapter
+#  HttpAdapter Integration — Integration with daemon.httpadapter
 # =============================================================================
 
 def make_http_handler(ip, port, routes):
     """
-    Tạo HTTP request handler dùng HttpAdapter.process_request().
+    Create HTTP request handler using HttpAdapter.process_request().
 
-    EventLoop (select) chịu trách nhiệm I/O (recv/send).
-    HttpAdapter chịu trách nhiệm giao thức HTTP (auth, routing, response).
+    EventLoop (select) handles I/O (recv/send).
+    HttpAdapter handles HTTP protocol (auth, routing, response).
 
-    Phân tầng rõ ràng:
+    Clear layering:
         EventLoop layer  →  SelectHTTPServer  →  ConnectionBuffer (recv)
-        HTTP layer       →  HttpAdapter.process_request()          (parse/auth/route)
-        API layer        →  master_api_handler()                   (business logic)
+        HTTP layer       →  HttpAdapter.process_request() (parse/auth/route)
+        API layer        →  master_api_handler()          (business logic)
 
-    :param ip (str): IP của backend server.
-    :param port (int): Port của backend server.
-    :param routes (dict): Bảng route handlers {(method, path): handler_func}.
+    :param ip (str): IP of backend server.
+    :param port (int): Port of backend server.
+    :param routes (dict): Route handler table {(method, path): handler_func}.
     :return: callable(raw_request: str, addr: tuple) -> bytes
     """
     from .httpadapter import HttpAdapter
 
     def handler(raw_request: str, addr: tuple) -> bytes:
         """
-        Gọi HttpAdapter.process_request() để xử lý request.
+        Call HttpAdapter.process_request() to handle the request.
 
-        HttpAdapter đã có đầy đủ:
+        HttpAdapter handles:
             - Parse HTTP request (Request.prepare)
-            - Xác thực: Cookie session_id + Basic Auth
-            - Phân quyền: public / private / API
-            - Routing: gọi handler từ routes
+            - Authentication: Cookie session_id + Basic Auth
+            - Authorization: public / private / API
+            - Routing: call handler from routes
             - Build response bytes
         """
         adapter = HttpAdapter(ip, port, None, addr, routes)
@@ -515,17 +531,17 @@ def make_http_handler(ip, port, routes):
 
 def run_select_server(ip: str, port: int, routes: dict):
     """
-    Khởi động HTTP server dùng select() event loop.
+    Start HTTP server using select() event loop.
 
-    Kết hợp:
+    Combines:
         make_http_handler() → HttpAdapter.process_request() (HTTP layer)
-        SelectHTTPServer    → EventLoop                     (I/O layer)
+        SelectHTTPServer    → EventLoop                  (I/O layer)
 
-    Được gọi từ backend.py khi mode="callback".
+    Called from backend.py when mode="callback".
 
-    :param ip (str): IP bind.
-    :param port (int): Port lắng nghe.
-    :param routes (dict): Bảng route handler.
+    :param ip (str): IP to bind.
+    :param port (int): Port to listen on.
+    :param routes (dict): Route handler table.
     """
     print("[eventloop] mode=callback — select() EventLoop (no asyncio)")
 
@@ -535,8 +551,8 @@ def run_select_server(ip: str, port: int, routes: dict):
             print(f"   + [{method}] {path} → {func.__name__}")
 
     handler = make_http_handler(ip, port, routes)
-    loop    = EventLoop.get_instance()
-    server  = SelectHTTPServer(ip, port, handler)
+    loop = EventLoop.get_instance()
+    server = SelectHTTPServer(ip, port, handler)
     server.start()
     loop.run_forever()
 

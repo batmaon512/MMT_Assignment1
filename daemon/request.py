@@ -128,7 +128,7 @@ class Request():
         #
         # TODO manage the webapp hook in this mounting point
         #
-        
+
         if not routes == {}:
             self.routes = routes
             print("[Request] Routing METHOD {} path {}".format(self.method, self.path))
@@ -139,11 +139,11 @@ class Request():
             # ...
             #
 
-        # ĐÂY LÀ PHẦN LẤY BODY (RUỘT THƯ) DÀNH CHO SERVER
-        # Bắt buộc phải có để đọc được tin nhắn Chat hoặc API
+        # THIS IS THE BODY EXTRACTION (MESSAGE CONTENT) FOR SERVER
+        # Required to read Chat messages or API requests
         self._raw_headers, self._raw_body = self.fetch_headers_body(request)
         self.body = self._raw_body
-        
+
         # TODO: implement the cookie function here by parsing the header
         cookie_str = self.headers.get('cookie', '')
         self.cookies = {}

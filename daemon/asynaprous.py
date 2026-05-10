@@ -11,20 +11,20 @@
 #
 
 """
-deamon.asynaprous
+daemon.asynaprous
 ~~~~~~~~~~~~~~~~~
 
-Lightweight web application router cho RESTful URL endpoints.
-Không dùng asyncio — chỉ dùng Python standard library.
+Lightweight web application router for RESTful URL endpoints.
+Does not use asyncio — only Python standard library.
 
-Cơ chế:
-    - Decorator @app.route() đăng ký handler vào bảng routes.
-    - app.run() → create_backend() → run_backend() với mode được chọn.
+Mechanism:
+    - Decorator @app.route() registers handler into routes table.
+    - app.run() → create_backend() → run_backend() with selected mode.
 
-Supported modes (set qua daemon.backend.mode_async):
+Supported modes (set via daemon.backend.mode_async):
     - "coroutine" : asyncio event loop
     - "threading" : one thread per connection
-    - "callback"  : custom select() event loop (không asyncio)
+    - "callback"  : custom select() event loop (no asyncio)
 """
 
 import inspect
@@ -80,9 +80,9 @@ class AsynapRous:
         """
         Decorator to register a route handler for a specific path and HTTP methods.
 
-        Tự động phát hiện sync/async handler qua inspect.
-        Không cần asyncio — async handler sẽ được chạy qua asyncio.run()
-        tạm thời trong make_http_handler() nếu cần.
+        Automatically detects sync/async handler via inspect.
+        No need for asyncio — async handlers will be run via asyncio.run()
+        temporarily in make_http_handler() if needed.
 
         :param path (str): The URL path to route.
         :param methods (list): A list of HTTP methods (e.g., ['GET', 'POST']) to bind.
@@ -93,8 +93,8 @@ class AsynapRous:
             for method in methods:
                 self.routes[(method.upper(), path)] = func
 
-            # Gắn metadata lên function để dễ debug
-            func._route_path    = path
+            # Attach metadata to function for easier debugging
+            func._route_path = path
             func._route_methods = methods
 
             def sync_wrapper(*args, **kwargs):
