@@ -20,6 +20,7 @@ PEER_CACHE = {}
 #  Utilities
 # ─────────────────────────────────────────────────────────────────
 
+
 def json_response(payload, status=200):
     body = json.dumps(payload)
     status_text = "OK" if status == 200 else "Bad Request"
@@ -105,15 +106,15 @@ def send_to_peer_async(target_ip, target_port, payload):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.setblocking(False)
         s.connect_ex((target_ip, int(target_port)))
-        
+
         loop = EventLoop.get_instance()
-        
+
         class AsyncSender:
             def __init__(self, sock, data):
                 self.sock = sock
                 self.data = data
                 self.sent = 0
-                
+
             def do_write(self, sock):
                 try:
                     sent = sock.send(self.data[self.sent:])
@@ -135,7 +136,7 @@ def send_to_peer_async(target_ip, target_port, payload):
                     pass
                 except Exception:
                     self.cleanup()
-                    
+
             def cleanup(self):
                 try:
                     loop.unregister(self.sock)
@@ -150,7 +151,8 @@ def send_to_peer_async(target_ip, target_port, payload):
         loop.call_later(5.0, sender.cleanup)
         return True
     except Exception as e:
-        print(f"[ChatApp] Error creating async socket to {target_ip}:{target_port}: {e}")
+        print(
+            f"[ChatApp] Error creating async socket to {target_ip}:{target_port}: {e}")
         return False
 
 
@@ -232,8 +234,9 @@ def get_list(req):
         for peer in res.get("peers", []):
             name = peer.get("name")
             if name:
-                PEER_CACHE[name] = {"ip": peer.get("ip"), "port": peer.get("port")}
-        
+                PEER_CACHE[name] = {"ip": peer.get(
+                    "ip"), "port": peer.get("port")}
+
     return json_response(res)
 
 
@@ -289,7 +292,8 @@ def connect_peer(req):
     )
 
     if target_peer:
-        PEER_CACHE[target] = {"ip": target_peer["ip"], "port": target_peer["port"]}
+        PEER_CACHE[target] = {"ip": target_peer["ip"],
+                              "port": target_peer["port"]}
         return json_response({"code": 1, "message": "Connected", "peer": target_peer})
     else:
         return json_response({"code": 0, "message": "Peer not found"})
@@ -309,7 +313,7 @@ def send_peer(req):
     global PEER_CACHE
     data = json.loads(req.body) if req.body else {}
     target_name = data.get("to")
-    message     = data.get("message")
+    message = data.get("message")
     sender_name = getattr(req, "user", None) or data.get("from")
 
     if not target_name or not message:
@@ -324,7 +328,8 @@ def send_peer(req):
             None
         )
         if found:
-            PEER_CACHE[target_name] = {"ip": found["ip"], "port": found["port"]}
+            PEER_CACHE[target_name] = {
+                "ip": found["ip"], "port": found["port"]}
             target_peer = PEER_CACHE[target_name]
 
     if not target_peer:
@@ -340,7 +345,8 @@ def send_peer(req):
         "time": time.time() * 1000
     }
 
-    success = send_to_peer_async(target_peer["ip"], target_peer["port"], payload)
+    success = send_to_peer_async(
+        target_peer["ip"], target_peer["port"], payload)
     if success:
         return json_response({"code": 1, "message": "Message enqueued in EventLoop"})
     else:
@@ -357,7 +363,7 @@ def broadcast_peer(req):
     """
     global PEER_CACHE
     data = json.loads(req.body) if req.body else {}
-    message     = data.get("message")
+    message = data.get("message")
     sender_name = getattr(req, "user", None) or data.get("from")
 
     if not message:
@@ -418,7 +424,7 @@ def poll_messages(req):
 
 def create_chatapp(ip, port, tracker_host, tracker_p):
     global tracker_ip, tracker_port
-    tracker_ip   = tracker_host
+    tracker_ip = tracker_host
     tracker_port = tracker_p
     app.prepare_address(ip, port)
     app.run()

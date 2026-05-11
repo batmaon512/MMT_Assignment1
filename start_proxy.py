@@ -59,7 +59,8 @@ def parse_virtual_hosts(config_file):
         config_text = f.read()
 
     # Match each host block
-    host_blocks = re.findall(r'host\s+"([^"]+)"\s*\{(.*?)\}', config_text, re.DOTALL)
+    host_blocks = re.findall(
+        r'host\s+"([^"]+)"\s*\{(.*?)\}', config_text, re.DOTALL)
 
     dist_policy_map = ""
 
@@ -69,7 +70,7 @@ def parse_virtual_hosts(config_file):
 
         # Find all proxy_pass entries
         proxy_passes = re.findall(r'proxy_pass\s+http://([^\s;]+);', block)
-        map = proxy_map.get(host,[])
+        map = proxy_map.get(host, [])
         map = map + proxy_passes
         proxy_map[host] = map
 
@@ -77,24 +78,24 @@ def parse_virtual_hosts(config_file):
         policy_match = re.search(r'dist_policy\s+(\w+)', block)
         if policy_match:
             dist_policy_map = policy_match.group(1)
-        else: #default policy is round_robin
+        else:  # default policy is round_robin
             dist_policy_map = 'round-robin'
-            
+
         #
         # @bksysnet: Build the mapping and policy
-        # TODO: this policy varies among scenarios 
+        # TODO: this policy varies among scenarios
         #       the default policy is provided with one proxy_pass
         #       In the multi alternatives of proxy_pass then
         #       the policy is applied to identify the highes matching
         #       proxy_pass
         #
-        if len(proxy_map.get(host,[])) == 1:
-            routes[host] = (proxy_map.get(host,[])[0], dist_policy_map)
+        if len(proxy_map.get(host, [])) == 1:
+            routes[host] = (proxy_map.get(host, [])[0], dist_policy_map)
         # esle if:
         #         TODO:  apply further policy matching here
         #
         else:
-            routes[host] = (proxy_map.get(host,[]), dist_policy_map)
+            routes[host] = (proxy_map.get(host, []), dist_policy_map)
 
     for key, value in routes.items():
         print(key, value)
@@ -113,14 +114,15 @@ if __name__ == "__main__":
     :arg --server-port (int): Port number to bind the server (default: 9000).
     """
 
-    parser = argparse.ArgumentParser(prog='Proxy', description='Proxy daemon', epilog='Proxy daemon')
+    parser = argparse.ArgumentParser(
+        prog='Proxy', description='Proxy daemon', epilog='Proxy daemon')
     parser.add_argument('--server-ip', default='0.0.0.0',
                         help='IP address to bind proxy (default: 0.0.0.0)')
     parser.add_argument('--server-port', type=int, default=PROXY_PORT,
                         help='Port to bind proxy (default: {})'.format(PROXY_PORT))
     parser.add_argument('--config', default='config/proxy.conf',
                         help='Path to proxy config file (default: config/proxy.conf)')
- 
+
     args = parser.parse_args()
     ip = args.server_ip
     port = args.server_port

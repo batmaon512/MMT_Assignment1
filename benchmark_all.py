@@ -13,8 +13,9 @@ DEFAULT_CB_PORT = 9020
 DEFAULT_AS_PORT = 9030
 DEFAULT_PROXY_PORT = 8080
 DEFAULT_N = 2000
-DEFAULT_STEP     = 200
+DEFAULT_STEP = 200
 DEFAULT_ENDPOINT = "/status"
+
 
 def build_http_request(host, port, path="/status"):
     return (
@@ -22,6 +23,7 @@ def build_http_request(host, port, path="/status"):
         f"Host: {host}:{port}\r\n"
         f"Connection: close\r\n\r\n"
     ).encode("utf-8")
+
 
 def send_request(host, port, path, results, errors, index):
     t_start = time.perf_counter()
@@ -35,7 +37,8 @@ def send_request(host, port, path, results, errors, index):
         resp = b""
         while True:
             chunk = s.recv(4096)
-            if not chunk: break
+            if not chunk:
+                break
             resp += chunk
         s.close()
 
@@ -49,6 +52,7 @@ def send_request(host, port, path, results, errors, index):
     except Exception as e:
         errors.append(f"[{index}] {type(e).__name__}: {e}")
 
+
 def run_benchmark(host, port, path, n, concurrency):
     latencies, errors = [], []
     sent = 0
@@ -58,15 +62,17 @@ def run_benchmark(host, port, path, n, concurrency):
         batch_size = min(concurrency, n - sent)
         threads = []
         for i in range(batch_size):
-            t = threading.Thread(target=send_request, args=(host, port, path, latencies, errors, sent + i))
+            t = threading.Thread(target=send_request, args=(
+                host, port, path, latencies, errors, sent + i))
             threads.append(t)
             t.start()
-        for t in threads: t.join()
+        for t in threads:
+            t.join()
         sent += batch_size
 
     total_time = time.perf_counter() - t_total_start
     success = len(latencies)
-    
+
     if success == 0:
         return {"rps": 0, "avg": 0, "p95": 0, "errors": len(errors)}
 
@@ -78,6 +84,7 @@ def run_benchmark(host, port, path, n, concurrency):
         "p95": p95,
         "errors": len(errors)
     }
+
 
 def check_server(host, port, label):
     try:
@@ -93,6 +100,7 @@ def check_server(host, port, label):
         print(f"  [--] {label:<10} (Port {port}) - OFFLINE")
         return False
 
+
 def save_csv(filename, headers, rows):
     with open(filename, mode='w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
@@ -100,11 +108,15 @@ def save_csv(filename, headers, rows):
         writer.writerows(rows)
     print(f"✅ Data exported to file: {filename}")
 
+
 def main():
     parser = argparse.ArgumentParser(description="Benchmark Load Balancer")
-    parser.add_argument("-n", type=int, default=DEFAULT_N, help="Total requests")
-    parser.add_argument("--step", type=int, default=DEFAULT_STEP, help="Concurrency step")
-    parser.add_argument("--endpoint", default=DEFAULT_ENDPOINT, help="API Endpoint")
+    parser.add_argument("-n", type=int, default=DEFAULT_N,
+                        help="Total requests")
+    parser.add_argument("--step", type=int,
+                        default=DEFAULT_STEP, help="Concurrency step")
+    parser.add_argument(
+        "--endpoint", default=DEFAULT_ENDPOINT, help="API Endpoint")
     args = parser.parse_args()
 
     steps = list(range(args.step, args.n + 1, args.step)) or [args.step]
@@ -112,7 +124,7 @@ def main():
     print("\n" + "="*85)
     print("  ASYNAPROUS BENCHMARK: SERVERS vs PROXY LOAD BALANCER")
     print("="*85)
-    
+
     th_ok = check_server(DEFAULT_HOST, DEFAULT_TH_PORT, "Threading")
     cb_ok = check_server(DEFAULT_HOST, DEFAULT_CB_PORT, "Callback")
     as_ok = check_server(DEFAULT_HOST, DEFAULT_AS_PORT, "Asyncio")
@@ -125,17 +137,26 @@ def main():
 
     for c in steps:
         if th_ok:
-            r = run_benchmark(DEFAULT_HOST, DEFAULT_TH_PORT, args.endpoint, args.n, c)
-            csv_servers.append([c, "Threading", round(r['rps'],1), round(r['avg'],1), round(r['p95'],1), r['errors']])
-            print(f" {c:>11} | {'Threading':>10} | {r['rps']:>12.1f} | {r['avg']:>10.1f} | {r['p95']:>10.1f} | {r['errors']:>6}")
+            r = run_benchmark(DEFAULT_HOST, DEFAULT_TH_PORT,
+                              args.endpoint, args.n, c)
+            csv_servers.append([c, "Threading", round(r['rps'], 1), round(
+                r['avg'], 1), round(r['p95'], 1), r['errors']])
+            print(
+                f" {c:>11} | {'Threading':>10} | {r['rps']:>12.1f} | {r['avg']:>10.1f} | {r['p95']:>10.1f} | {r['errors']:>6}")
         if cb_ok:
-            r = run_benchmark(DEFAULT_HOST, DEFAULT_CB_PORT, args.endpoint, args.n, c)
-            csv_servers.append([c, "Callback", round(r['rps'],1), round(r['avg'],1), round(r['p95'],1), r['errors']])
-            print(f" {c:>11} | {'Callback':>10} | {r['rps']:>12.1f} | {r['avg']:>10.1f} | {r['p95']:>10.1f} | {r['errors']:>6}")
+            r = run_benchmark(DEFAULT_HOST, DEFAULT_CB_PORT,
+                              args.endpoint, args.n, c)
+            csv_servers.append([c, "Callback", round(r['rps'], 1), round(
+                r['avg'], 1), round(r['p95'], 1), r['errors']])
+            print(
+                f" {c:>11} | {'Callback':>10} | {r['rps']:>12.1f} | {r['avg']:>10.1f} | {r['p95']:>10.1f} | {r['errors']:>6}")
         if as_ok:
-            r = run_benchmark(DEFAULT_HOST, DEFAULT_AS_PORT, args.endpoint, args.n, c)
-            csv_servers.append([c, "Asyncio", round(r['rps'],1), round(r['avg'],1), round(r['p95'],1), r['errors']])
-            print(f" {c:>11} | {'Asyncio':>10} | {r['rps']:>12.1f} | {r['avg']:>10.1f} | {r['p95']:>10.1f} | {r['errors']:>6}")
+            r = run_benchmark(DEFAULT_HOST, DEFAULT_AS_PORT,
+                              args.endpoint, args.n, c)
+            csv_servers.append([c, "Asyncio", round(r['rps'], 1), round(
+                r['avg'], 1), round(r['p95'], 1), r['errors']])
+            print(
+                f" {c:>11} | {'Asyncio':>10} | {r['rps']:>12.1f} | {r['avg']:>10.1f} | {r['p95']:>10.1f} | {r['errors']:>6}")
         print("-" * 85)
 
     print("\n" + "="*85)
@@ -154,6 +175,7 @@ def main():
 
     headers = ["Concurrency", "Mode", "RPS", "Avg_ms", "P95_ms", "Errors"]
     save_csv("benchmark_servers.csv", headers, csv_servers)
+
 
 if __name__ == "__main__":
     main()

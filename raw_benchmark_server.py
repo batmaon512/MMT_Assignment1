@@ -13,6 +13,7 @@ import argparse
 
 RESPONSE = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK"
 
+
 def handle_client_sync(conn):
     try:
         conn.recv(1024)
@@ -21,6 +22,7 @@ def handle_client_sync(conn):
         pass
     finally:
         conn.close()
+
 
 def run_threading(port):
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -31,9 +33,11 @@ def run_threading(port):
     while True:
         try:
             conn, _ = server.accept()
-            threading.Thread(target=handle_client_sync, args=(conn,), daemon=True).start()
+            threading.Thread(target=handle_client_sync,
+                             args=(conn,), daemon=True).start()
         except KeyboardInterrupt:
             break
+
 
 def run_callback(port):
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -41,7 +45,7 @@ def run_callback(port):
     server.bind(("0.0.0.0", port))
     server.listen(1000)
     server.setblocking(False)
-    
+
     r_list = [server]
     w_list = []
 
@@ -56,29 +60,32 @@ def run_callback(port):
                     r_list.append(conn)
                 else:
                     try:
-                        data = s.recv(1024) # Read only, no parsing
+                        data = s.recv(1024)  # Read only, no parsing
                         if data:
                             r_list.remove(s)
-                            w_list.append(s) # Move to send queue
+                            w_list.append(s)  # Move to send queue
                         else:
                             r_list.remove(s)
                             s.close()
                     except:
-                        if s in r_list: r_list.remove(s)
+                        if s in r_list:
+                            r_list.remove(s)
                         s.close()
-            
+
             for s in writable:
                 try:
-                    s.sendall(RESPONSE) # Send response directly
+                    s.sendall(RESPONSE)  # Send response directly
                 except:
                     pass
                 finally:
-                    if s in w_list: w_list.remove(s)
+                    if s in w_list:
+                        w_list.remove(s)
                     s.close()
         except KeyboardInterrupt:
             break
         except Exception:
             pass
+
 
 async def handle_async(reader, writer):
     try:
@@ -90,8 +97,10 @@ async def handle_async(reader, writer):
     finally:
         writer.close()
 
+
 def run_asyncio(port):
     print(f"[RAW ASYNCIO] Ready on port {port}...")
+
     async def main():
         server = await asyncio.start_server(handle_async, "0.0.0.0", port)
         async with server:
@@ -101,9 +110,11 @@ def run_asyncio(port):
     except KeyboardInterrupt:
         pass
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["threading", "callback", "asyncio"], required=True)
+    parser.add_argument(
+        "--mode", choices=["threading", "callback", "asyncio"], required=True)
     parser.add_argument("--port", type=int, required=True)
     args = parser.parse_args()
 

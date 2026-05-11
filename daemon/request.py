@@ -19,6 +19,7 @@ request settings (cookies, auth, proxies).
 """
 from .dictionary import CaseInsensitiveDict
 
+
 class Request():
     """The fully mutable "class" `Request <Request>` object,
     containing the exact bytes that will be sent to the server.
@@ -59,7 +60,7 @@ class Request():
         #: dictionary of HTTP headers.
         self.headers = None
         #: HTTP path
-        self.path = None        
+        self.path = None
         # The cookies set used to create Cookie header
         self.cookies = None
         # Authentication details
@@ -89,7 +90,7 @@ class Request():
             return None, None, None
 
         return method, path, version
-             
+
     def prepare_headers(self, request):
         """Prepares the given HTTP headers."""
         lines = request.split('\r\n')
@@ -114,12 +115,14 @@ class Request():
 
         # Prepare the request line from the request header
         print("[Request] prepare request missg {}".format(request))
-        self.method, self.path, self.version = self.extract_request_line(request)
-        print("[Request] {} path {} version {}".format(self.method, self.path, self.version))
+        self.method, self.path, self.version = self.extract_request_line(
+            request)
+        print("[Request] {} path {} version {}".format(
+            self.method, self.path, self.version))
 
         if self.method is None:
             return
-            
+
         self.headers = self.prepare_headers(request)
 
         #
@@ -131,7 +134,8 @@ class Request():
 
         if not routes == {}:
             self.routes = routes
-            print("[Request] Routing METHOD {} path {}".format(self.method, self.path))
+            print("[Request] Routing METHOD {} path {}".format(
+                self.method, self.path))
             self.hook = routes.get((self.method, self.path))
             print("[Request] Hook has request {}".format(request))
             #
@@ -164,25 +168,23 @@ class Request():
         #
         # TODO prepare the request authentication
         #
-	# self.auth = ...
+        # self.auth = ...
         return
-
 
     def prepare_content_length(self, body):
         self.headers["Content-Length"] = "0"
         #
         # TODO prepare the request authentication
         #
-	# self.auth = ...
+        # self.auth = ...
         return
-
 
     def prepare_auth(self, auth, url=""):
         #
         # TODO prepare the request authentication
         #
-	# self.auth = ...
+        # self.auth = ...
         return
 
     def prepare_cookies(self, cookies):
-            self.headers["Cookie"] = cookies
+        self.headers["Cookie"] = cookies

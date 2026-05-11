@@ -58,7 +58,8 @@ def forward_request(host, port, request):
 
     try:
         backend.connect((host, port))
-        backend.sendall(request if isinstance(request, bytes) else request.encode())
+        backend.sendall(request if isinstance(
+            request, bytes) else request.encode())
         response = b""
         while True:
             chunk = backend.recv(65536)
@@ -80,6 +81,7 @@ def forward_request(host, port, request):
 
 # Global variable storing round-robin index for each hostname
 rr_indices = {}
+
 
 def resolve_routing_policy(hostname, routes):
     """
@@ -116,6 +118,7 @@ def resolve_routing_policy(hostname, routes):
         proxy_host, proxy_port = proxy_map.split(":", 1)
 
     return proxy_host, proxy_port
+
 
 def handle_client(ip, port, conn, addr, routes):
     """
@@ -154,8 +157,9 @@ def handle_client(ip, port, conn, addr, routes):
         print("Not a valid integer")
 
     if resolved_host:
-        print("[Proxy] Host name {} is forwarded to {}:{}".format(hostname,resolved_host, resolved_port))
-        response = forward_request(resolved_host, resolved_port, request)        
+        print("[Proxy] Host name {} is forwarded to {}:{}".format(
+            hostname, resolved_host, resolved_port))
+        response = forward_request(resolved_host, resolved_port, request)
     else:
         response = (
             "HTTP/1.1 404 Not Found\r\n"
@@ -168,6 +172,7 @@ def handle_client(ip, port, conn, addr, routes):
     conn.sendall(response)
     conn.close()
 
+
 def run_proxy(ip, port, routes):
     """
     Starts the proxy server and listens for incoming connections. 
@@ -175,7 +180,7 @@ def run_proxy(ip, port, routes):
     The process dinds the proxy server to the specified IP and port.
     In each incomping connection, it accepts the connections and
     spawns a new thread for each client using `handle_client`.
- 
+
 
     :params ip (str): IP address to bind the proxy server.
     :params port (int): port number to listen on.
@@ -200,6 +205,7 @@ def run_proxy(ip, port, routes):
             t.start()
     except socket.error as e:
         print("Socket error: {}".format(e))
+
 
 def create_proxy(ip, port, routes):
     """

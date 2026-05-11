@@ -43,6 +43,7 @@ SESSIONS_FILE = os.path.normpath(
     os.path.join(os.path.dirname(__file__), "..", "db", "sessions_id.txt")
 )
 
+
 def load_valid_users():
     users = {}
     try:
@@ -58,10 +59,12 @@ def load_valid_users():
         pass
     return users
 
+
 VALID_USERS = load_valid_users() or {
     "admin": "123456",
     "user1": "password"
 }
+
 
 def add_session(session_id, username):
     """Add a new session, limited to maximum 100 users."""
@@ -70,6 +73,7 @@ def add_session(session_id, username):
         oldest_key = next(iter(ACTIVE_SESSIONS))
         del ACTIVE_SESSIONS[oldest_key]
     ACTIVE_SESSIONS[session_id] = username
+
 
 def load_sessions():
     sessions = {}
@@ -95,6 +99,7 @@ def load_sessions():
         return sessions
     return sessions
 
+
 def save_sessions(sessions):
     os.makedirs(os.path.dirname(SESSIONS_FILE), exist_ok=True)
     lines = []
@@ -104,14 +109,17 @@ def save_sessions(sessions):
     with open(SESSIONS_FILE, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
 
+
 def create_session(username):
     sessions = load_sessions()
-    sessions = {sid: data for sid, data in sessions.items() if data[0] != username}
+    sessions = {sid: data for sid,
+                data in sessions.items() if data[0] != username}
     session_id = uuid.uuid4().hex
     expire_time = time.time() + SESSION_TTL
     sessions[session_id] = (username, expire_time)
     save_sessions(sessions)
     return session_id
+
 
 def validate_session(session_id):
     sessions = load_sessions()
@@ -124,11 +132,13 @@ def validate_session(session_id):
         return None
     return user
 
+
 def remove_session(session_id):
     sessions = load_sessions()
     if session_id in sessions:
         sessions.pop(session_id, None)
         save_sessions(sessions)
+
 
 class HttpAdapter:
     """
@@ -247,7 +257,8 @@ class HttpAdapter:
             auth_parts = req.auth.split(' ')
             if len(auth_parts) == 2 and auth_parts[0] == 'Basic':
                 try:
-                    decoded_str = base64.b64decode(auth_parts[1]).decode('utf-8')
+                    decoded_str = base64.b64decode(
+                        auth_parts[1]).decode('utf-8')
                     username, password = decoded_str.split(':', 1)
                     if VALID_USERS.get(username) == password:
                         is_authenticated = True
@@ -345,7 +356,6 @@ class HttpAdapter:
         conn.sendall(response)
         conn.close()
 
-
     async def handle_client_coroutine(self, reader, writer):
         """
         Handle connection using async mechanism (coroutine mode).
@@ -384,8 +394,6 @@ class HttpAdapter:
         finally:
             writer.close()
             await writer.wait_closed()
-
-
 
     @property
     def extract_cookies(self, req, resp):
@@ -456,9 +464,8 @@ class HttpAdapter:
 
         return response
 
-
     # def get_connection(self, url, proxies=None):
-        # """Returns a url connection for the given URL. 
+        # """Returns a url connection for the given URL.
 
         # :param url: The URL to connect to.
         # :param proxies: (optional) A Requests-style dictionary of proxies used on this request.
@@ -468,23 +475,22 @@ class HttpAdapter:
         # proxy = select_proxy(url, proxies)
 
         # if proxy:
-            # proxy = prepend_scheme_if_needed(proxy, "http")
-            # proxy_url = parse_url(proxy)
-            # if not proxy_url.host:
-                # raise InvalidProxyURL(
-                    # "Please check proxy URL. It is malformed "
-                    # "and could be missing the host."
-                # )
-            # proxy_manager = self.proxy_manager_for(proxy)
-            # conn = proxy_manager.connection_from_url(url)
+        # proxy = prepend_scheme_if_needed(proxy, "http")
+        # proxy_url = parse_url(proxy)
+        # if not proxy_url.host:
+        # raise InvalidProxyURL(
+        # "Please check proxy URL. It is malformed "
+        # "and could be missing the host."
+        # )
+        # proxy_manager = self.proxy_manager_for(proxy)
+        # conn = proxy_manager.connection_from_url(url)
         # else:
-            # # Only scheme should be lower case
-            # parsed = urlparse(url)
-            # url = parsed.geturl()
-            # conn = self.poolmanager.connection_from_url(url)
+        # # Only scheme should be lower case
+        # parsed = urlparse(url)
+        # url = parsed.geturl()
+        # conn = self.poolmanager.connection_from_url(url)
 
         # return conn
-
 
     def add_headers(self, request):
         """
@@ -493,7 +499,7 @@ class HttpAdapter:
         This method is intended to be overridden by subclasses to inject
         custom headers. It does nothing by default.
 
-        
+
         :param request: :class:`Request <Request>` to add headers to.
         """
         pass

@@ -63,8 +63,8 @@ class AsynapRous:
         Sets up an empty route registry and prepares placeholders for IP and port.
         """
         self.routes = {}
-        self.ip     = None
-        self.port   = None
+        self.ip = None
+        self.port = None
 
     def prepare_address(self, ip, port):
         """
@@ -73,7 +73,7 @@ class AsynapRous:
         :param ip (str): The IP address to bind the server.
         :param port (str): The port number to listen on.
         """
-        self.ip   = ip
+        self.ip = ip
         self.port = port
 
     def route(self, path, methods=['GET']):

@@ -57,6 +57,7 @@ sel = selectors.DefaultSelector()
 
 mode_async = "callback"
 
+
 def handle_client(ip, port, conn, addr, routes):
     """
     Initializes an HttpAdapter instance and delegates the client handling logic to it.
@@ -75,7 +76,7 @@ def handle_client(ip, port, conn, addr, routes):
 
 
 # Callback for handling new client (itself run in sync mode)
-def handle_client_callback(server, ip, port,conn, addr, routes):
+def handle_client_callback(server, ip, port, conn, addr, routes):
     """
     Initialize connection instance and delegates the client handling logic to it.
 
@@ -108,6 +109,7 @@ def get_handle_client_coroutine(ip, port, routes):
         # Start handling client (will yield CPU on await)
         await daemon.handle_client_coroutine(reader, writer)
     return handle_client_coroutine
+
 
 async def async_server(ip="0.0.0.0", port=7000, routes={}):
     """Start async HTTP server using asyncio."""

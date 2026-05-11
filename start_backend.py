@@ -22,15 +22,15 @@ using the socket framework. It parses command-line arguments to configure the
 server's IP address and port, and then launches the backend server.
 """
 
+from daemon.api import API_ROUTES
 import socket
 import argparse
 
 from daemon import create_backend
 
 # Default port number used if none is specified via command-line arguments.
-PORT = 9000 
+PORT = 9000
 
-from daemon.api import API_ROUTES
 
 if __name__ == "__main__":
     """
@@ -50,10 +50,10 @@ if __name__ == "__main__":
         epilog='Backend daemon for http_deamon application'
     )
     parser.add_argument('--server-ip',
-        type=str,
-        default='0.0.0.0',
-        help='IP address to bind the server. Default is 0.0.0.0'
-    )
+                        type=str,
+                        default='0.0.0.0',
+                        help='IP address to bind the server. Default is 0.0.0.0'
+                        )
     parser.add_argument(
         '--server-port',
         type=int,
@@ -67,7 +67,7 @@ if __name__ == "__main__":
         choices=['coroutine', 'threading', 'callback'],
         help='Server mode: coroutine (asyncio), threading, or callback (custom select event loop). Default is callback.'
     )
- 
+
     args = parser.parse_args()
     ip = args.server_ip
     port = args.server_port

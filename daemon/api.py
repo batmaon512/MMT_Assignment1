@@ -46,6 +46,7 @@ def _cleanup_online(now):
     for name in expired:
         ONLINE.pop(name, None)
 
+
 def app_echo(req):
     """
     API Echo: receives any text and returns it back.
@@ -69,6 +70,7 @@ def app_echo(req):
     header_str = resp.build_response_header(req)
     return header_str + resp._content
 
+
 def app_hello(req):
     """API greeting endpoint."""
     response_body = "HELLO: Welcome to AsynapRous server!"
@@ -79,6 +81,7 @@ def app_hello(req):
 
     header_str = resp.build_response_header(req)
     return header_str + resp._content
+
 
 def app_login(req):
     """Login endpoint returning JSON for the web client."""
@@ -100,6 +103,7 @@ def app_login(req):
         )
         return res.encode('utf-8')
 
+
 def app_me(req):
     """Return the current authenticated user."""
     if req.user:
@@ -110,6 +114,7 @@ def app_me(req):
         body = '{"error": "Chua dang nhap"}'
         res = f"HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {len(body)}\r\n\r\n{body}"
         return res.encode('utf-8')
+
 
 def app_logout(req):
     """Logout endpoint that clears both session and account cookies."""
@@ -134,14 +139,15 @@ def app_logout(req):
     )
     return res.encode('utf-8')
 
+
 def app_status(req):
     """Health check endpoint."""
     response_body = '{"status": "online", "server": "AsynapRous", "version": "1.0", "message": "Server dang hoat dong tot!"}'
-    
+
     resp = Response()
     resp._content = response_body.encode('utf-8')
     resp.headers['Content-Type'] = 'application/json'
-    
+
     header_str = resp.build_response_header(req)
     return header_str + resp._content
 
@@ -314,11 +320,13 @@ def app_signal_poll(req):
 
     return _json_response(req, {"code": 1, "messages": messages})
 
+
 # Path tuyet doi den anh benchmark
 _BENCHMARK_IMAGE_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "static", "images", "benchmark_1.jpg"
 )
+
 
 def app_benchmark_image(req):
     """
@@ -410,7 +418,8 @@ def app_benchmark_sync(req):
     """
     import time as _time
     _time.sleep(BENCHMARK_DELAY)
-    payload = '{"mode": "sync", "delay_ms": ' + str(int(BENCHMARK_DELAY * 1000)) + ', "status": "ok"}'
+    payload = '{"mode": "sync", "delay_ms": ' + \
+        str(int(BENCHMARK_DELAY * 1000)) + ', "status": "ok"}'
     body = payload.encode('utf-8')
     resp = Response()
     resp.status_code = 200
@@ -431,7 +440,8 @@ async def app_benchmark_async(req):
     """
     import asyncio as _asyncio
     await _asyncio.sleep(BENCHMARK_DELAY)
-    payload = '{"mode": "async", "delay_ms": ' + str(int(BENCHMARK_DELAY * 1000)) + ', "status": "ok"}'
+    payload = '{"mode": "async", "delay_ms": ' + \
+        str(int(BENCHMARK_DELAY * 1000)) + ', "status": "ok"}'
     body = payload.encode('utf-8')
     resp = Response()
     resp.status_code = 200
@@ -458,7 +468,7 @@ API_ROUTES = {
     ('POST', '/connect-peer'): app_connect_peer,
     ('POST', '/broadcast-peer'): app_broadcast_peer,
     ('POST', '/send-peer'): app_send_peer,
-    
+
     # GET handlers
     ('GET', '/hello'): app_hello,
     ('GET', '/status'): app_status,
@@ -468,6 +478,7 @@ API_ROUTES = {
     ('GET', '/benchmark/sync'): app_benchmark_sync,
     ('GET', '/benchmark/async'): app_benchmark_async,
 }
+
 
 def master_api_handler(req, resp):
     """Master router for API hooks and static file serving."""

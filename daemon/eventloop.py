@@ -139,6 +139,7 @@ class TimerHandle:
         """Mark this timer as cancelled."""
         self.cancelled = True
 
+
 class EventLoop:
     """
     Custom-built Event Loop using select().
@@ -472,7 +473,8 @@ class SelectHTTPServer:
         now = time.time()
         for conn, buf in list(self._buffers.items()):
             if now - buf.last_active_time > 60.0:
-                print(f"[Terminator] Timeout closing idle connection: {buf.addr}")
+                print(
+                    f"[Terminator] Timeout closing idle connection: {buf.addr}")
                 self._close_conn(conn)
 
         # Schedule next cleanup
@@ -555,4 +557,3 @@ def run_select_server(ip: str, port: int, routes: dict):
     server = SelectHTTPServer(ip, port, handler)
     server.start()
     loop.run_forever()
-
