@@ -5,6 +5,11 @@ from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 import concurrent.futures
 
+# --- CONFIGURATION ---
+ZMQ_SERVER_IP = "127.0.0.1"
+ZMQ_TASK_PORT = 5557    # Cổng Server phát task (Worker PULL)
+ZMQ_RESULT_PORT = 5558  # Cổng Server nhận kết quả (Worker PUSH)
+
 # Dành riêng một Executor cho việc xử lý ảnh (CPU-bound) để không cướp thread của mạng I/O
 cpu_executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
@@ -51,11 +56,11 @@ async def main():
     
     # Kết nối PULL để lấy ảnh (từ cổng 5557 của Server)
     puller = ctx.socket(zmq.PULL)
-    puller.connect("tcp://127.0.0.1:5557")
+    puller.connect(f"tcp://{ZMQ_SERVER_IP}:{ZMQ_TASK_PORT}")
     
     # Kết nối PUSH để trả ảnh (về cổng 5558 của Server)
     pusher = ctx.socket(zmq.PUSH)
-    pusher.connect("tcp://127.0.0.1:5558")
+    pusher.connect(f"tcp://{ZMQ_SERVER_IP}:{ZMQ_RESULT_PORT}")
     
     print("Worker Xử Lý Ảnh (Pillow) đã sẵn sàng!")
     loop = asyncio.get_running_loop()

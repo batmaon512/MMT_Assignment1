@@ -7,13 +7,18 @@ import os
 
 from daemon import AsynapRous
 
+# --- CONFIGURATION ---
+ZMQ_HOST = "127.0.0.1"
+ZMQ_TASK_PORT = 5557    # Cổng Server phát task
+ZMQ_RESULT_PORT = 5558  # Cổng Server nhận kết quả về
+
 app = AsynapRous()
 
 # --- ZMQ SETUP ---
 zmq_ctx = zmq.Context()
 # Sử dụng TCP thay vì IPC trên Windows để đảm bảo hoạt động 100% không bị lỗi path
 zmq_pusher = zmq_ctx.socket(zmq.PUSH)
-zmq_pusher.bind("tcp://127.0.0.1:5557")
+zmq_pusher.bind(f"tcp://{ZMQ_HOST}:{ZMQ_TASK_PORT}")
 
 SHARED_RESULTS = {}
 results_lock = threading.Lock()
@@ -23,8 +28,8 @@ task_counter = 0
 def zmq_collector():
     """Chạy ngầm để nhận kết quả từ Worker"""
     receiver = zmq_ctx.socket(zmq.PULL)
-    receiver.bind("tcp://127.0.0.1:5558")
-    print("[Server] Collector listening on 5558...")
+    receiver.bind(f"tcp://{ZMQ_HOST}:{ZMQ_RESULT_PORT}")
+    print(f"[Server] Collector listening on {ZMQ_RESULT_PORT}...")
     while True:
         try:
             msg = receiver.recv_json()
