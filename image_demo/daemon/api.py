@@ -1,0 +1,492 @@
+import json
+import os
+import threading
+import time
+from .response import Response
+
+ONLINE_TTL = 5.0
+ONLINE = {}
+SIGNAL_BOX = {}
+DELAY_OFFER = {}
+PEER_REGISTRY = {}
+PEER_MESSAGES = {}
+REGISTRY_LOCK = threading.Lock()
+
+
+def _json_response(req, payload, status=200, extra_headers=None):
+    resp = Response()
+    resp.status_code = status
+    resp.reason = {
+        200: "OK",
+        201: "Created",
+        400: "Bad Request",
+        401: "Unauthorized",
+        404: "Not Found",
+    }.get(status, "OK")
+    resp._content = json.dumps(payload).encode('utf-8')
+    resp.headers['Content-Type'] = 'application/json'
+    if extra_headers:
+        for key, value in extra_headers.items():
+            resp.headers[key] = value
+    header_str = resp.build_response_header(req)
+    return header_str + resp._content
+
+
+def _parse_json_body(req):
+    if not req.body:
+        return None
+    try:
+        return json.loads(req.body)
+    except Exception:
+        return None
+
+
+def _cleanup_online(now):
+    expired = [name for name, ts in ONLINE.items() if now - ts > ONLINE_TTL]
+    for name in expired:
+        ONLINE.pop(name, None)
+
+
+def app_echo(req):
+    """
+    API Echo: receives any text and returns it back.
+    Uses Response object to wrap headers professionally.
+    """
+    message = "No data"
+    if req.body:
+        try:
+            data = json.loads(req.body)
+            message = data.get('text', '')
+        except:
+            message = req.body
+
+    response_body = f"ECHO: You said '{message}'"
+
+    # Use Response helper to automatically calculate Content-Length and Date
+    resp = Response()
+    resp._content = response_body.encode('utf-8')
+    resp.headers['Content-Type'] = 'text/plain'
+
+    header_str = resp.build_response_header(req)
+    return header_str + resp._content
+
+
+def app_hello(req):
+    """API greeting endpoint."""
+    response_body = "HELLO: Welcome to AsynapRous server!"
+
+    resp = Response()
+    resp._content = response_body.encode('utf-8')
+    resp.headers['Content-Type'] = 'text/plain'
+
+    header_str = resp.build_response_header(req)
+    return header_str + resp._content
+
+
+def app_login(req):
+    """Login endpoint returning JSON for the web client."""
+    # HttpAdapter validates Basic auth and injects req.user on success.
+    if req.user:
+        body = '{"success": true, "message": "Login successful"}'
+        cookie_header = ""
+        if hasattr(req, 'new_cookie') and req.new_cookie:
+            cookie_header += f"Set-Cookie: {req.new_cookie}\r\n"
+        cookie_header += f"Set-Cookie: account={req.user}; Path=/\r\n"
+        res = f"HTTP/1.1 200 OK\r\n{cookie_header}Content-Type: application/json\r\nContent-Length: {len(body)}\r\n\r\n{body}"
+        return res.encode('utf-8')
+    else:
+        body = '{"success": false, "error": "Invalid username or password"}'
+        res = (
+            "HTTP/1.1 401 Unauthorized\r\n"
+            "Content-Type: application/json\r\n"
+            f"Content-Length: {len(body)}\r\n\r\n{body}"
+        )
+        return res.encode('utf-8')
+
+
+def app_me(req):
+    """Return the current authenticated user."""
+    if req.user:
+        body = '{"username": "' + req.user + '"}'
+        res = f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {len(body)}\r\n\r\n{body}"
+        return res.encode('utf-8')
+    else:
+        body = '{"error": "Chua dang nhap"}'
+        res = f"HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {len(body)}\r\n\r\n{body}"
+        return res.encode('utf-8')
+
+
+def app_logout(req):
+    """Logout endpoint that clears both session and account cookies."""
+    session_id = None
+    if req.cookies:
+        session_id = req.cookies.get('session_id')
+    if session_id:
+        try:
+            from .httpadapter import ACTIVE_SESSIONS, remove_session
+            ACTIVE_SESSIONS.pop(session_id, None)
+            remove_session(session_id)
+        except Exception:
+            pass
+    body = '{"success": true}'
+    # Set Max-Age=0 to allow browser to auto-delete cookie
+    res = (
+        "HTTP/1.1 200 OK\r\n"
+        "Set-Cookie: session_id=; Max-Age=0; Path=/; HttpOnly\r\n"
+        "Set-Cookie: account=; Max-Age=0; Path=/\r\n"
+        "Content-Type: application/json\r\n"
+        f"Content-Length: {len(body)}\r\n\r\n{body}"
+    )
+    return res.encode('utf-8')
+
+
+def app_status(req):
+    """Health check endpoint."""
+    response_body = '{"status": "online", "server": "AsynapRous", "version": "1.0", "message": "Server dang hoat dong tot!"}'
+
+    resp = Response()
+    resp._content = response_body.encode('utf-8')
+    resp.headers['Content-Type'] = 'application/json'
+
+    header_str = resp.build_response_header(req)
+    return header_str + resp._content
+
+
+def app_online(req):
+    data = _parse_json_body(req)
+    if not data:
+        return _json_response(req, {"code": 0, "message": "Invalid JSON"}, status=400)
+
+    name = (data.get("name") or req.user or "").strip()
+    ip = (data.get("ip") or "").strip()
+    port = data.get("port")
+
+    if not name:
+        return _json_response(req, {"code": 0, "message": "Missing name"}, status=400)
+
+    now = time.time()
+    with REGISTRY_LOCK:
+        ONLINE[name] = now
+        _cleanup_online(now)
+        if ip or port:
+            PEER_REGISTRY[name] = {
+                "ip": ip,
+                "port": port,
+                "last_seen": now,
+            }
+
+    return _json_response(req, {"code": 1, "online": sorted(list(ONLINE.keys()))})
+
+
+def app_submit_info(req):
+    data = _parse_json_body(req)
+    if not data:
+        return _json_response(req, {"code": 0, "message": "Invalid JSON"}, status=400)
+
+    name = (data.get("name") or req.user or "").strip()
+    ip = (data.get("ip") or "").strip()
+    port = data.get("port")
+
+    if not name:
+        return _json_response(req, {"code": 0, "message": "Missing name"}, status=400)
+
+    now = time.time()
+    with REGISTRY_LOCK:
+        PEER_REGISTRY[name] = {"ip": ip, "port": port, "last_seen": now}
+        ONLINE[name] = now
+        _cleanup_online(now)
+
+    return _json_response(req, {"code": 1, "message": "Registered"}, status=201)
+
+
+def app_get_list(req):
+    now = time.time()
+    with REGISTRY_LOCK:
+        _cleanup_online(now)
+        peers = [
+            {"name": name, **info}
+            for name, info in PEER_REGISTRY.items()
+            if ONLINE.get(name)
+        ]
+    return _json_response(req, {"code": 1, "peers": peers})
+
+
+def app_connect_peer(req):
+    data = _parse_json_body(req)
+    if not data:
+        return _json_response(req, {"code": 0, "message": "Invalid JSON"}, status=400)
+
+    target = (data.get("target") or "").strip()
+    if not target:
+        return _json_response(req, {"code": 0, "message": "Missing target"}, status=400)
+
+    with REGISTRY_LOCK:
+        info = PEER_REGISTRY.get(target)
+
+    if not info:
+        return _json_response(req, {"code": 0, "message": "Target not found"}, status=404)
+
+    return _json_response(req, {"code": 1, "peer": {"name": target, **info}})
+
+
+def app_broadcast_peer(req):
+    data = _parse_json_body(req)
+    if not data:
+        return _json_response(req, {"code": 0, "message": "Invalid JSON"}, status=400)
+
+    sender = (data.get("from") or req.user or "").strip()
+    message = data.get("message")
+    if not sender or message is None:
+        return _json_response(req, {"code": 0, "message": "Missing fields"}, status=400)
+
+    with REGISTRY_LOCK:
+        for name in PEER_REGISTRY.keys():
+            if name == sender:
+                continue
+            PEER_MESSAGES.setdefault(name, []).append({
+                "from": sender,
+                "message": message,
+                "time": time.time(),
+            })
+
+    return _json_response(req, {"code": 1, "message": "Broadcast queued"})
+
+
+def app_send_peer(req):
+    data = _parse_json_body(req)
+    if not data:
+        return _json_response(req, {"code": 0, "message": "Invalid JSON"}, status=400)
+
+    sender = (data.get("from") or req.user or "").strip()
+    target = (data.get("to") or "").strip()
+    message = data.get("message")
+    if not sender or not target or message is None:
+        return _json_response(req, {"code": 0, "message": "Missing fields"}, status=400)
+
+    with REGISTRY_LOCK:
+        PEER_MESSAGES.setdefault(target, []).append({
+            "from": sender,
+            "message": message,
+            "time": time.time(),
+        })
+
+    return _json_response(req, {"code": 1, "message": "Message queued"})
+
+
+def app_signal(req):
+    data = _parse_json_body(req)
+    if not data:
+        return _json_response(req, {"code": 0, "message": "Invalid JSON"}, status=400)
+
+    sender = data.get("from")
+    target = data.get("to")
+    msg_type = data.get("type")
+
+    if not sender or not target or not msg_type:
+        return _json_response(req, {"code": 0, "message": "Missing fields"}, status=400)
+
+    key = "->".join(sorted([sender, target]))
+    if msg_type == "offer":
+        now = time.time()
+        last_time = DELAY_OFFER.get(key, 0)
+        if now - last_time < 3:
+            return _json_response(req, {"code": 2, "message": "Offer too soon"})
+        DELAY_OFFER[key] = now
+
+    with REGISTRY_LOCK:
+        SIGNAL_BOX.setdefault(target, []).append({
+            "from": sender,
+            "type": msg_type,
+            "offer": data.get("offer"),
+            "answer": data.get("answer"),
+            "candidate": data.get("candidate"),
+        })
+
+    return _json_response(req, {"code": 1, "message": "Signal stored"})
+
+
+def app_signal_poll(req):
+    data = _parse_json_body(req)
+    if not data:
+        return _json_response(req, {"code": 0, "message": "Invalid JSON"}, status=400)
+
+    name = data.get("name")
+    if not name:
+        return _json_response(req, {"code": 0, "message": "Missing name"}, status=400)
+
+    with REGISTRY_LOCK:
+        messages = SIGNAL_BOX.get(name, [])
+        SIGNAL_BOX[name] = []
+
+    return _json_response(req, {"code": 1, "messages": messages})
+
+
+# Path tuyet doi den anh benchmark
+_BENCHMARK_IMAGE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "static", "images", "benchmark_1.jpg"
+)
+
+
+def app_benchmark_image(req):
+    """
+    Tra ve file anh benchmark_1.jpg tu static/images/.
+    Hoat dong voi ca coroutine lan threading mode.
+    """
+    try:
+        with open(_BENCHMARK_IMAGE_PATH, 'rb') as f:
+            image_data = f.read()
+
+        resp = Response()
+        resp.status_code = 200
+        resp.reason = "OK"
+        resp._content = image_data
+        resp.headers['Content-Type'] = 'image/jpeg'
+        resp.headers['Cache-Control'] = 'no-cache'
+
+        header_str = resp.build_response_header(req)
+        return header_str + resp._content
+
+    except FileNotFoundError:
+        body = b'{"error": "benchmark_1.jpg not found"}'
+        resp = Response()
+        resp.status_code = 404
+        resp.reason = "Not Found"
+        resp._content = body
+        resp.headers['Content-Type'] = 'application/json'
+        header_str = resp.build_response_header(req)
+        return header_str + resp._content
+
+
+async def app_benchmark_image_async(req):
+    """
+    Phien ban async cua app_benchmark_image — dung cho coroutine mode.
+    Doc file trong thread rieng de khong block event loop.
+    """
+    import asyncio
+    loop = asyncio.get_event_loop()
+    try:
+        image_data = await loop.run_in_executor(
+            None,
+            lambda: open(_BENCHMARK_IMAGE_PATH, 'rb').read()
+        )
+        resp = Response()
+        resp.status_code = 200
+        resp.reason = "OK"
+        resp._content = image_data
+        resp.headers['Content-Type'] = 'image/jpeg'
+        resp.headers['Cache-Control'] = 'no-cache'
+        header_str = resp.build_response_header(req)
+        return header_str + resp._content
+    except FileNotFoundError:
+        body = b'{"error": "benchmark_1.jpg not found"}'
+        resp = Response()
+        resp.status_code = 404
+        resp.reason = "Not Found"
+        resp._content = body
+        resp.headers['Content-Type'] = 'application/json'
+        header_str = resp.build_response_header(req)
+        return header_str + resp._content
+
+
+# ──────────────────────────────────────────────────────────────
+#  BENCHMARK ENDPOINTS
+#  Muc dich: so sanh dung coroutine vs threading
+#
+#  /benchmark/sync  - dung time.sleep() → block thread
+#                     Threading: moi thread bi treo rieng → khong anh huong nhau
+#                     Coroutine: block ca event loop → tat ca request bi treo!
+#
+#  /benchmark/async - dung asyncio.sleep() → nhuong CPU cho event loop
+#                     Coroutine: event loop phuc vu cac request khac trong luc cho
+#                     Threading: moi thread van bi treo (khong co loi ich)
+#
+#  Ket qua mong doi:
+#    - /benchmark/sync  → Threading thang (moi thread doc lap)
+#    - /benchmark/async → Coroutine thang (event loop xu ly dong thoi)
+# ──────────────────────────────────────────────────────────────
+
+# Do tre gia lap network/DB latency (giay)
+BENCHMARK_DELAY = 0.05  # 50ms — tuong duong LAN latency
+
+
+def app_benchmark_sync(req):
+    """
+    Benchmark endpoint cho threading mode.
+    Dung time.sleep() de gia lap I/O wait (network, DB...).
+    Moi thread bi block doc lap → threading xu ly tot voi concurrency vua phai.
+    """
+    import time as _time
+    _time.sleep(BENCHMARK_DELAY)
+    payload = '{"mode": "sync", "delay_ms": ' + \
+        str(int(BENCHMARK_DELAY * 1000)) + ', "status": "ok"}'
+    body = payload.encode('utf-8')
+    resp = Response()
+    resp.status_code = 200
+    resp.reason = "OK"
+    resp._content = body
+    resp.headers['Content-Type'] = 'application/json'
+    resp.headers['Cache-Control'] = 'no-cache'
+    header_str = resp.build_response_header(req)
+    return header_str + resp._content
+
+
+async def app_benchmark_async(req):
+    """
+    Benchmark endpoint cho coroutine mode.
+    Dung asyncio.sleep() de gia lap I/O wait.
+    Event loop KHONG bi block: trong 50ms cho, no phuc vu tat ca request khac.
+    Day la dieu threading khong the lam duoc o concurrency cao.
+    """
+    import asyncio as _asyncio
+    await _asyncio.sleep(BENCHMARK_DELAY)
+    payload = '{"mode": "async", "delay_ms": ' + \
+        str(int(BENCHMARK_DELAY * 1000)) + ', "status": "ok"}'
+    body = payload.encode('utf-8')
+    resp = Response()
+    resp.status_code = 200
+    resp.reason = "OK"
+    resp._content = body
+    resp.headers['Content-Type'] = 'application/json'
+    resp.headers['Cache-Control'] = 'no-cache'
+    header_str = resp.build_response_header(req)
+    return header_str + resp._content
+
+
+# API route table
+API_ROUTES = {
+    # POST/PUT handlers
+    ('POST', '/echo'): app_echo,
+    ('PUT', '/hello'): app_hello,
+    ('POST', '/api/login'): app_login,
+    ('POST', '/api/logout'): app_logout,
+    ('POST', '/online'): app_online,
+    ('POST', '/signal'): app_signal,
+    ('POST', '/signal_poll'): app_signal_poll,
+    ('POST', '/submit-info'): app_submit_info,
+    ('POST', '/get-list'): app_get_list,
+    ('POST', '/connect-peer'): app_connect_peer,
+    ('POST', '/broadcast-peer'): app_broadcast_peer,
+    ('POST', '/send-peer'): app_send_peer,
+
+    # GET handlers
+    ('GET', '/hello'): app_hello,
+    ('GET', '/status'): app_status,
+    ('GET', '/api/me'): app_me,
+    ('GET', '/benchmark_1.jpg'): app_benchmark_image_async,
+    # Benchmark endpoints (chon dung endpoint theo mode)
+    ('GET', '/benchmark/sync'): app_benchmark_sync,
+    ('GET', '/benchmark/async'): app_benchmark_async,
+}
+
+
+def master_api_handler(req, resp):
+    """Master router for API hooks and static file serving."""
+    if req.hook:
+        return req.hook(req)
+    elif req.method == 'GET':
+        # Handle static file requests (only applies to GET)
+        return resp.build_response(req)
+    else:
+        # For other methods (POST, PUT...) without API route, block immediately
+        return resp.build_notfound()
