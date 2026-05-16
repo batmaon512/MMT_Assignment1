@@ -1,5 +1,5 @@
 import json
-import uuid
+import threading
 import minizmq as zmq
 import threading
 import sys
@@ -17,6 +17,8 @@ zmq_pusher.bind("tcp://127.0.0.1:5557")
 
 SHARED_RESULTS = {}
 results_lock = threading.Lock()
+
+task_counter = 0
 
 def zmq_collector():
     """Chạy ngầm để nhận kết quả từ Worker"""
@@ -50,75 +52,12 @@ def json_response(payload, status=200):
 @app.route('/images/app', methods=['GET', 'POST'])
 def serve_html(req):
     """Phục vụ file HTML giao diện"""
-    html_content = """<!DOCTYPE html>
-<html>
-<head>
-    <title>Image Processor (ZeroMQ)</title>
-    <style>
-        body { font-family: Arial; text-align: center; padding: 50px; background: #f4f4f9; }
-        .box { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); display: inline-block; }
-        img { max-width: 400px; margin-top: 20px; border-radius: 5px; }
-        button { padding: 10px 20px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 5px; }
-    </style>
-</head>
-<body>
-    <div class="box">
-        <h2>AsynapRous Image Processor</h2>
-        <input type="file" id="fileInput" accept="image/*"><br><br>
-        <button onclick="uploadImage()">Đóng dấu ảnh</button>
-        <p id="status"></p>
-        <div style="display: flex; gap: 20px; justify-content: center;">
-            <div>
-                <h4>Gốc</h4>
-                <img id="preview" style="display:none;">
-            </div>
-            <div>
-                <h4>Kết quả (Từ Worker)</h4>
-                <img id="result" style="display:none;">
-            </div>
-        </div>
-    </div>
-
-    <script>
-        let base64Image = "";
-
-        document.getElementById('fileInput').addEventListener('change', function(e) {
-            const file = e.target.files[0];
-            const reader = new FileReader();
-            reader.onload = function(event) {
-                base64Image = event.target.result;
-                document.getElementById('preview').src = base64Image;
-                document.getElementById('preview').style.display = 'block';
-            };
-            reader.readAsDataURL(file);
-        });
-
-        async function uploadImage() {
-            if (!base64Image) { alert("Vui lòng chọn ảnh!"); return; }
-            document.getElementById('status').innerText = "Đang gửi cho Worker xử lý...";
-            
-            try {
-                const response = await fetch('/images/process', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ image: base64Image })
-                });
-                
-                const data = await response.json();
-                if (data.image) {
-                    document.getElementById('result').src = data.image;
-                    document.getElementById('result').style.display = 'block';
-                    document.getElementById('status').innerText = "Xong!";
-                } else {
-                    document.getElementById('status').innerText = "Lỗi: " + data.error;
-                }
-            } catch (err) {
-                document.getElementById('status').innerText = "Lỗi kết nối!";
-            }
-        }
-    </script>
-</body>
-</html>"""
+    html_path = os.path.join(os.path.dirname(__file__), "index.html")
+    try:
+        with open(html_path, "r", encoding="utf-8") as f:
+            html_content = f.read()
+    except Exception as e:
+        html_content = f"<h1>Lỗi: Không tìm thấy file index.html</h1><p>{str(e)}</p>"
     res = (
         "HTTP/1.1 200 OK\r\n"
         "Content-Type: text/html; charset=utf-8\r\n"
@@ -135,14 +74,16 @@ def process_image(req):
         if not base64_img:
             return json_response({"error": "No image data"}, 400)
 
-        req_id = str(uuid.uuid4())[:8]
-        
-        # Đăng ký chờ kết quả
-        event = threading.Event()
+        global task_counter
         with results_lock:
+            task_counter += 1
+            req_id = str(task_counter)
+            
+            # Đăng ký chờ kết quả
+            event = threading.Event()
             SHARED_RESULTS[req_id] = {"event": event, "data": None}
             
-        # PUSH task (chỉ lấy phần data của base64, bỏ prefix)
+
         img_data = base64_img.split(",")[1] if "," in base64_img else base64_img
         
         zmq_pusher.send_json({
@@ -173,7 +114,6 @@ def process_image(req):
         return json_response({"error": str(e)}, 500)
 
 def create_imageapp(ip, port):
-    # Đăng ký công khai route mới để bỏ qua Authentication
     from daemon.httpadapter import HttpAdapter
     
     app.prepare_address(ip, port)

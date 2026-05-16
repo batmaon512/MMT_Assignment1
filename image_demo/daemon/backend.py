@@ -149,7 +149,11 @@ def run_backend(ip, port, routes):
 
     # --- Mode 1: Coroutine (asyncio) ---
     if mode_async == "coroutine":
-        asyncio.run(async_server(ip, port, routes))
+        try:
+            asyncio.run(async_server(ip, port, routes))
+        except KeyboardInterrupt:
+            import os
+            os._exit(0)
         return
 
     # --- Mode 3: Callback (select()) ---

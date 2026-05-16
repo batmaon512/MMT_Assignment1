@@ -147,7 +147,8 @@ class HttpAdapter:
                 bytes_remaining -= len(chunk)
 
             raw_msg = msg_bytes.decode('utf-8', errors='replace')
-            response = self.process_request(raw_msg, addr)
+            loop = asyncio.get_running_loop()
+            response = await loop.run_in_executor(None, self.process_request, raw_msg, addr)
 
             if isinstance(response, str):
                 response = response.encode('utf-8')

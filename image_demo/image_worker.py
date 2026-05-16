@@ -3,6 +3,10 @@ import minizmq as zmq
 import base64
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
+import concurrent.futures
+
+# Dành riêng một Executor cho việc xử lý ảnh (CPU-bound) để không cướp thread của mạng I/O
+cpu_executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
 def process_image_task(base64_str, watermark_text):
     try:
@@ -17,9 +21,21 @@ def process_image_task(base64_str, watermark_text):
         
         # 2. Đóng dấu watermark
         draw = ImageDraw.Draw(img)
-        # Lấy font mặc định, phóng to một chút bằng cách vẽ nhiều lần
-        draw.text((20, 20), watermark_text, fill="red")
-        draw.text((21, 21), watermark_text, fill="yellow")
+        
+        try:
+            # Dùng font Arial cỡ 40 (nhỏ hơn, thanh lịch hơn)
+            font = ImageFont.truetype("arial.ttf", 40)
+        except IOError:
+            # Dự phòng font mặc định
+            font = ImageFont.load_default()
+
+        # Tọa độ tâm bức ảnh
+        x = img.width / 2
+        y = img.height / 2
+        
+        # Vẽ chữ ở giữa (anchor="mm") với viền đen mỏng hơn
+        draw.text((x, y), watermark_text, fill="yellow", font=font, anchor="mm", 
+                  stroke_width=2, stroke_fill="red")
         
         # 3. Mã hóa ảnh lại thành Base64 để gửi về Server
         buffer = BytesIO()
@@ -52,9 +68,9 @@ async def main():
         
         print(f"\n[Worker] Bắt đầu xử lý ảnh ID: {req_id}...")
         
-        # Xử lý tính toán trong một Thread riêng (Tránh làm đơ ZMQ)
+        # Xử lý tính toán trong một Thread riêng biệt hoàn toàn (để không chặn luồng mạng I/O)
         success, result_or_err = await loop.run_in_executor(
-            None, process_image_task, base64_str, text
+            cpu_executor, process_image_task, base64_str, text
         )
         
         if success:
@@ -65,4 +81,8 @@ async def main():
             print(f"[Worker] LỖI tại {req_id}: {result_or_err}")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        import os
+        os._exit(0)

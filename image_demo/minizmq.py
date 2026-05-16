@@ -68,34 +68,63 @@ class MiniZmqSocket:
                 break
 
     def connect(self, uri):
+        self.uri = uri # Lưu lại để auto-reconnect
         ip, port = uri.replace("tcp://", "").split(":")
         import time
         while True:
             try:
                 self.sock.connect((ip, int(port)))
                 break
-            except ConnectionRefusedError:
+            except (ConnectionRefusedError, OSError):
+                self.sock.close()
+                self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 time.sleep(1) # Đợi Server bật lên
 
     def _io_background_worker(self):
-        """Luồng chạy ngầm: Cứ rảnh là lôi từ Queue trong RAM ra gửi đi qua mạng"""
+        """Luồng chạy ngầm: Lấy từ Queue gửi qua mạng"""
+        import time
         while True:
-            data = self.outbound_queue.get() # Sẽ ngủ (block) nếu Queue rỗng để tiết kiệm CPU
+            # Nếu là Server mà chưa có Worker nào kết nối thì chờ (không làm mất gói tin)
+            if self.is_server and not self.clients:
+                time.sleep(0.1)
+                continue
+                
+            data = self.outbound_queue.get() 
             
-            # Đẩy qua mạng
-            if self.clients:
+            if self.is_server:
                 with self.lock:
-                    client = self.clients[self.idx % len(self.clients)]
-                    self.idx += 1
+                    rlist = self.clients.copy()
+                if not rlist:
+                    # Lỡ client vừa ngắt kết nối, nhét lại vào Queue
+                    try: self.outbound_queue.put(data, block=False)
+                    except: pass
+                    continue
+                    
+                client = rlist[self.idx % len(rlist)]
+                self.idx += 1
                 try:
                     send_msg(client, data)
                 except:
-                    self.clients.remove(client)
+                    with self.lock:
+                        if client in self.clients:
+                            self.clients.remove(client)
+                    # Bỏ lại data vào queue để client khác xử lý
+                    try: self.outbound_queue.put(data, block=False)
+                    except: pass
             else:
-                try:
-                    send_msg(self.sock, data)
-                except:
-                    pass
+                # Client PUSH (Gửi đi)
+                while True:
+                    try:
+                        send_msg(self.sock, data)
+                        break # Gửi thành công thì thoát vòng lặp
+                    except (ConnectionResetError, ConnectionAbortedError, OSError):
+                        # Bị đứt kết nối, kết nối lại ngầm
+                        print(f"[MiniZMQ] Mất kết nối PUSH. Tự động kết nối lại {self.uri}...")
+                        self.sock.close()
+                        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                        self.connect(self.uri)
             self.outbound_queue.task_done()
 
     # --- Đồng bộ (Sync) ---
@@ -123,12 +152,29 @@ class MiniZmqSocket:
                         if data:
                             return data
                         else:
-                            self.clients.remove(c)
+                            with self.lock:
+                                if c in self.clients:
+                                    self.clients.remove(c)
                     except:
-                        self.clients.remove(c)
+                        with self.lock:
+                            if c in self.clients:
+                                self.clients.remove(c)
         # Nếu là Client PULL
         else:
-            return recv_msg(self.sock)
+            while True:
+                try:
+                    data = recv_msg(self.sock)
+                    if data is not None:
+                        return data
+                except (ConnectionResetError, ConnectionAbortedError, OSError):
+                    pass
+                
+                # Kết nối bị đứt (hoặc recv trả về None) -> Kết nối lại ngầm
+                print(f"[MiniZMQ] Mất kết nối PULL. Tự động kết nối lại {self.uri}...")
+                self.sock.close()
+                self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                self.connect(self.uri)
 
     # --- Bất đồng bộ (Async) ---
     async def send_json_async(self, data):

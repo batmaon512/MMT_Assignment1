@@ -114,7 +114,7 @@ class Request():
         """Prepares the entire request with the given parameters."""
 
         # Prepare the request line from the request header
-        print("[Request] prepare request missg {}".format(request))
+        # print("[Request] prepare request missg {}".format(request))
         self.method, self.path, self.version = self.extract_request_line(
             request)
         print("[Request] {} path {} version {}".format(
@@ -137,7 +137,7 @@ class Request():
             print("[Request] Routing METHOD {} path {}".format(
                 self.method, self.path))
             self.hook = routes.get((self.method, self.path))
-            print("[Request] Hook has request {}".format(request))
+            # print("[Request] Hook has request {}".format(request))
             #
             # self.hook manipulation goes here
             # ...
